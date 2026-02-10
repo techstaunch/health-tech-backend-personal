@@ -2,6 +2,7 @@ import express from "express";
 import { installAuth, installCORS } from "./middleware";
 import { healthRouter } from "./routes";
 import agentRoutes from "./routes/agent.routes";
+import voiceToTextRoutes from "./voice-to-text/routes/voice-to-text.routes";
 
 const app = express();
 
@@ -12,5 +13,6 @@ app.use(installAuth);
 
 app.use("/health", healthRouter);
 app.use("/api/agent", agentRoutes);
+app.use("/api/voice-to-text", voiceToTextRoutes);
 
 export default app;
