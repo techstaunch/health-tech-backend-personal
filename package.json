@@ -15,11 +15,15 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@langchain/langgraph": "^1.1.4",
+    "@langchain/openai": "^1.2.5",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "langchain": "^1.2.18",
     "node-pg-migrate": "^8.0.4",
     "pg": "^8.17.2",
-    "winston": "^3.19.0"
+    "winston": "^3.19.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
