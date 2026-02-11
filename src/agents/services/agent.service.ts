@@ -67,7 +67,7 @@ export class AgentService {
                         }
 
                         // Execute tool
-                        const result = await tool.invoke(toolCall.args as any);
+                        const result = await (tool as any).invoke(toolCall.args as any);
 
                         logger.info("Tool call completed", {
                             toolName: toolCall.name,

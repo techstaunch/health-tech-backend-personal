@@ -3,6 +3,7 @@
  */
 
 import { healthInfoTool } from "./health-info.tool";
+import { summaryEditorTool } from "./summary-editor.tool";
 
 /**
  * Array of all available tools for the healthcare agent
@@ -10,10 +11,11 @@ import { healthInfoTool } from "./health-info.tool";
  */
 export const healthcareTools = [
     healthInfoTool,
+    summaryEditorTool,
     // Add more tools here as needed
 ];
 
 /**
  * Export individual tools for direct access if needed
  */
-export { healthInfoTool };
+export { healthInfoTool, summaryEditorTool };
