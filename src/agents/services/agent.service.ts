@@ -1,4 +1,4 @@
-import { StateGraph, MessagesAnnotation, END, CompiledStateGraph } from "@langchain/langgraph";
+import { StateGraph, MessagesAnnotation, END, CompiledStateGraph, Annotation } from "@langchain/langgraph";
 
 import { createAzureOpenAIModel } from "../config/azure-openai.config";
 import { HEALTHCARE_SYSTEM_PROMPT } from "../config/agent.config";
@@ -6,6 +6,14 @@ import { healthcareTools } from "../tools";
 import logger from "../../logger";
 import { AgentMessage } from "../types/agent.types";
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
+
+/**
+ * Custom state for the agent, extending MessagesAnnotation with userId
+ */
+export const AgentState = Annotation.Root({
+    ...MessagesAnnotation.spec,
+    userId: Annotation<string>(),
+});
 
 /**
  * Agent Service - Main service for LangChain agent operations
@@ -28,9 +36,10 @@ export class AgentService {
             const modelWithTools = model.bindTools(healthcareTools);
 
             // Define the function that calls the model
-            const callModel = async (state: typeof MessagesAnnotation.State) => {
+            const callModel = async (state: typeof AgentState.State) => {
+                const systemPrompt = `${HEALTHCARE_SYSTEM_PROMPT}\n\nCURRENT USER SESSION ID: ${state.userId}\nUse this session ID for any tools that require a userId argument.`;
                 const messages = [
-                    new SystemMessage(HEALTHCARE_SYSTEM_PROMPT),
+                    new SystemMessage(systemPrompt),
                     ...state.messages,
                 ];
                 const response = await modelWithTools.invoke(messages);
@@ -38,7 +47,7 @@ export class AgentService {
             };
 
             // Define the conditional edge function
-            const shouldContinue = (state: typeof MessagesAnnotation.State) => {
+            const shouldContinue = (state: typeof AgentState.State) => {
                 const lastMessage = state.messages[state.messages.length - 1];
                 if (lastMessage._getType() === "ai" && (lastMessage as AIMessage).tool_calls?.length) {
                     return "tools";
@@ -99,7 +108,7 @@ export class AgentService {
             };
 
             // Build the graph
-            const workflow = new StateGraph(MessagesAnnotation)
+            const workflow = new StateGraph(AgentState)
                 .addNode("agent", callModel)
                 .addNode("tools", toolNode)
                 .addEdge("__start__", "agent")
@@ -123,6 +132,23 @@ export class AgentService {
         }
     }
 
+    private extractToolResult(agentResult: any) {
+        const messages = agentResult.messages;
+
+        const toolMsg = [...messages]
+            .reverse()
+            .find((m: any) => m._getType?.() === "tool");
+
+        if (!toolMsg) return null;
+
+        try {
+            return JSON.parse(toolMsg.content);
+        } catch {
+            return null;
+        }
+    }
+
+
     /**
      * Invokes the agent with a single request
      * @param messages - Array of conversation messages
@@ -142,6 +168,7 @@ export class AgentService {
             // We blindly pass messages because langgraph expects BaseMessageLike
             const result = await this.agent.invoke({
                 messages: messages as any,
+                userId: userId || "anonymous"
             });
 
             const duration = Date.now() - startTime;
@@ -151,8 +178,14 @@ export class AgentService {
                 duration,
                 responseMessageCount: (result as any).messages?.length || 0,
             });
-
-            return result;
+            const toolData = this.extractToolResult(result);
+            return {
+                success: true,
+                message: toolData?.message ?? null,
+                edits: toolData?.edits ?? [],
+                raw: undefined // don't leak LangChain internals
+            };
+            // return result;
         } catch (error: any) {
             logger.error("Agent invocation failed", {
                 error: error.message,
@@ -177,7 +210,10 @@ export class AgentService {
             });
 
             const stream = await this.agent.stream(
-                { messages: messages as any },
+                {
+                    messages: messages as any,
+                    userId: userId || "anonymous"
+                },
                 { streamMode: "values" }
             );
 

@@ -10,7 +10,7 @@ import { summaryEditorTool } from "./summary-editor.tool";
  * Add new tools to this array as they are created
  */
 export const healthcareTools = [
-    healthInfoTool,
+    // healthInfoTool,
     summaryEditorTool,
     // Add more tools here as needed
 ];
@@ -18,4 +18,5 @@ export const healthcareTools = [
 /**
  * Export individual tools for direct access if needed
  */
-export { healthInfoTool, summaryEditorTool };
+// export { healthInfoTool, summaryEditorTool };
+export { summaryEditorTool };

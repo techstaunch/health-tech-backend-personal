@@ -23,14 +23,26 @@ export const summaryEditorTool = new DynamicStructuredTool({
 
             // 1. Intent Parser (Small LLM call to extract target and action)
             const model = createAzureOpenAIModel();
-            const intentPrompt = `Extract edit command as JSON.
-Example output:
-{
-  "action": "replace",
-  "target": "effexor dose",
-  "value": "75 mg daily"
-}
-Instruction: ${instruction}`;
+            const intentPrompt = `
+            You are an intent parser for a medical document editor.
+
+            Extract the edit request strictly as JSON.
+
+            Rules:
+            - Output ONLY valid JSON
+            - No explanation
+            - No markdown
+            - No extra text
+
+            Schema:
+            {
+            "action": "replace | add | delete | update",
+            "target": "what section or concept should be changed",
+            "value": "new value or text"
+            }
+
+            Instruction: ${instruction}
+            `;
 
             const intentResponse = await model.invoke([
                 new SystemMessage("You are a specialized intent parser. Extract the action, target, and value from the instruction as JSON."),
@@ -60,13 +72,34 @@ Instruction: ${instruction}`;
 
             // 3. Edit only those sections (LLM)
             const editedSections = await Promise.all(relevantSections.map(async (section) => {
-                const editPrompt = `Send:
-Instruction: ${instruction}
+                const editPrompt = `
+                You are a clinical documentation editor.
 
-Text:
-${section.content}
+                Your job:
+                Update ONLY the provided section content based on the instruction.
 
-Return ONLY the updated text for this section.`;
+                STRICT RULES:
+                - Modify only what is necessary
+                - Do NOT add explanations
+                - Do NOT summarize
+                - Keep medical wording professional
+                - Preserve formatting and structure
+                - Return ONLY valid JSON
+                - No markdown
+                - No commentary
+
+                Output format EXACTLY:
+                {
+                "title": "${section.title}",
+                "content": "FULL updated section text here"
+                }
+
+                Instruction:
+                ${instruction}
+
+                Current Section:
+                ${section.content}
+                `;
 
                 const editResponse = await model.invoke([
                     new SystemMessage("You are a medical scribe editor. Edit the provided text based on the instruction. Return ONLY the updated content."),
