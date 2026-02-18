@@ -71,3 +71,55 @@ export interface ToolResult {
     data?: any;
     error?: string;
 }
+
+// ─── Super Agent Types ────────────────────────────────────────────────────────
+
+/**
+ * Parsed intent from a user instruction.
+ * Produced by the intent-parser module.
+ */
+export interface IntentResult {
+    /** The type of edit operation */
+    action: "replace" | "add" | "delete" | "update";
+    /** The section or concept to target */
+    target: string;
+    /** The new value or content to apply */
+    value: string;
+}
+
+/**
+ * A document section enriched with a hybrid search score and confidence.
+ * Returned by DraftService.hybridSearch().
+ */
+export interface ScoredSection {
+    id: number;
+    title: string;
+    content: string;
+    embedding?: number[];
+    /** Normalized hybrid score in [0, 1] */
+    score: number;
+    /** Alias for score — used for threshold checks */
+    confidence: number;
+}
+
+/**
+ * Result of a single section patch operation.
+ * Produced by the patch-editor module.
+ */
+export interface PatchResult {
+    title: string;
+    original: string;
+    updated: string;
+    confidence: number;
+}
+
+/**
+ * Structured output returned by the edit_summary_sections tool.
+ * Consumed by AgentService.extractToolResult().
+ */
+export interface ToolOutput {
+    message: string;
+    edits: PatchResult[];
+    /** True when the agent should ask the user for more specific input */
+    needsClarification?: boolean;
+}
