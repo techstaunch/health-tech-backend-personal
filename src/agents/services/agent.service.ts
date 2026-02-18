@@ -135,16 +135,29 @@ export class AgentService {
     private extractToolResult(agentResult: any) {
         const messages = agentResult.messages;
 
+        // Find the last tool message — this carries the structured ToolOutput
         const toolMsg = [...messages]
             .reverse()
             .find((m: any) => m._getType?.() === "tool");
 
-        if (!toolMsg) return null;
+        if (!toolMsg) {
+            // Fallback: surface the last AI text response (e.g. clarification question
+            // that the agent decided to answer without calling the tool)
+            const aiMsg = [...messages]
+                .reverse()
+                .find((m: any) => m._getType?.() === "ai");
+            if (aiMsg) {
+                const text = typeof aiMsg.content === "string" ? aiMsg.content : JSON.stringify(aiMsg.content);
+                return { message: text, edits: [], needsClarification: false };
+            }
+            return null;
+        }
 
         try {
             return JSON.parse(toolMsg.content);
         } catch {
-            return null;
+            // If the content is plain text (not JSON), wrap it
+            return { message: toolMsg.content, edits: [], needsClarification: false };
         }
     }
 
@@ -183,9 +196,8 @@ export class AgentService {
                 success: true,
                 message: toolData?.message ?? null,
                 edits: toolData?.edits ?? [],
-                raw: undefined // don't leak LangChain internals
+                needsClarification: toolData?.needsClarification ?? false,
             };
-            // return result;
         } catch (error: any) {
             logger.error("Agent invocation failed", {
                 error: error.message,

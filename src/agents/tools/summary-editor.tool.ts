@@ -1,131 +1,129 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
-import { DraftService } from "../services/draft.service";
+import { DraftService, LOW_CONFIDENCE_THRESHOLD } from "../services/draft.service";
 import { createAzureOpenAIModel } from "../config/azure-openai.config";
+import { parseIntent } from "./intent-parser";
+import { patchSection, addToSection } from "./patch-editor";
+import { PatchResult, ToolOutput } from "../types/agent.types";
 import logger from "../../logger";
-import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
+// Shared model instance — created once, reused for all sub-calls within the tool
+const model = createAzureOpenAIModel();
 const draftService = new DraftService();
 
 /**
- * Tool for parsing intent and performing hybrid search + edit on summary sections
+ * edit_summary_sections — Super Agent Tool
+ *
+ * Orchestrates the full edit pipeline:
+ *   1. Intent Detection  → parseIntent()
+ *   2. Hybrid Search     → draftService.hybridSearch()
+ *   3. Confidence Check  → LOW_CONFIDENCE_THRESHOLD gate
+ *   4. Patch / Add       → patchSection() | addToSection()
+ *   5. Cache Update      → draftService.updateSection()
  */
 export const summaryEditorTool = new DynamicStructuredTool({
     name: "edit_summary_sections",
-    description: "Use this tool to edit specific sections of a summary document based on a natural language instruction. It performs intent parsing, hybrid search to find relevant sections, and then updates only those sections.",
+    description:
+        "Use this tool to edit specific sections of a discharge summary document based on a natural language instruction. " +
+        "It detects intent, finds the relevant section via hybrid search, validates confidence, and applies a targeted patch. " +
+        "Use for update, replace, add, and delete operations.",
     schema: z.object({
-        instruction: z.string().describe("The user's voice command or instruction (e.g., 'change effexor dose to 75 mg daily')"),
+        instruction: z
+            .string()
+            .describe(
+                "The user's editing instruction (e.g. 'Change Effexor dose to 75mg daily' or 'Add Penicillin allergy under Medical History')"
+            ),
         userId: z.string().describe("The unique identifier for the user session"),
     }),
-    func: async ({ instruction, userId }) => {
+    func: async ({ instruction, userId }): Promise<string> => {
         try {
-            logger.info("Summary editor tool called", { instruction, userId });
+            logger.info("edit_summary_sections: tool invoked", { instruction, userId });
 
-            // 1. Intent Parser (Small LLM call to extract target and action)
-            const model = createAzureOpenAIModel();
-            const intentPrompt = `
-            You are an intent parser for a medical document editor.
+            // ── Step 1: Intent Detection ──────────────────────────────────────
+            const intent = await parseIntent(instruction, model);
+            logger.info("edit_summary_sections: intent detected", { intent });
 
-            Extract the edit request strictly as JSON.
+            // ── Step 2: Hybrid Search ─────────────────────────────────────────
+            // Combine the extracted target with the full instruction for richer search
+            const searchQuery = `${intent.target} ${instruction}`.trim();
+            const topSections = await draftService.hybridSearch(userId, searchQuery);
 
-            Rules:
-            - Output ONLY valid JSON
-            - No explanation
-            - No markdown
-            - No extra text
-
-            Schema:
-            {
-            "action": "replace | add | delete | update",
-            "target": "what section or concept should be changed",
-            "value": "new value or text"
-            }
-
-            Instruction: ${instruction}
-            `;
-
-            const intentResponse = await model.invoke([
-                new SystemMessage("You are a specialized intent parser. Extract the action, target, and value from the instruction as JSON."),
-                new HumanMessage(intentPrompt)
-            ]);
-
-            let intent;
-            try {
-                // Try to parse JSON from the response
-                const content = typeof intentResponse.content === 'string' ? intentResponse.content : JSON.stringify(intentResponse.content);
-                const jsonMatch = content.match(/\{.*\}/s);
-                intent = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(content);
-            } catch (e) {
-                logger.error("Failed to parse intent JSON", { content: intentResponse.content });
-                throw new Error("Could not parse intent from instruction.");
-            }
-
-            logger.info("Intent parsed", { intent });
-
-            // 2. Hybrid Search (Find relevant sections)
-            const relevantSections = await draftService.hybridSearch(userId, intent.target || instruction);
-            logger.info("Hybrid search results", { count: relevantSections.length });
-
-            if (relevantSections.length === 0) {
-                return "No relevant sections found to edit.";
-            }
-
-            // 3. Edit only those sections (LLM)
-            const editedSections = await Promise.all(relevantSections.map(async (section) => {
-                const editPrompt = `
-                You are a clinical documentation editor.
-
-                Your job:
-                Update ONLY the provided section content based on the instruction.
-
-                STRICT RULES:
-                - Modify only what is necessary
-                - Do NOT add explanations
-                - Do NOT summarize
-                - Keep medical wording professional
-                - Preserve formatting and structure
-                - Return ONLY valid JSON
-                - No markdown
-                - No commentary
-
-                Output format EXACTLY:
-                {
-                "title": "${section.title}",
-                "content": "FULL updated section text here"
-                }
-
-                Instruction:
-                ${instruction}
-
-                Current Section:
-                ${section.content}
-                `;
-
-                const editResponse = await model.invoke([
-                    new SystemMessage("You are a medical scribe editor. Edit the provided text based on the instruction. Return ONLY the updated content."),
-                    new HumanMessage(editPrompt)
-                ]);
-
-                return {
-                    ...section,
-                    content: typeof editResponse.content === 'string' ? editResponse.content : JSON.stringify(editResponse.content)
+            if (topSections.length === 0) {
+                const output: ToolOutput = {
+                    message: "No sections found in the document. Please prepare the draft first.",
+                    edits: [],
+                    needsClarification: false,
                 };
-            }));
+                return JSON.stringify(output);
+            }
 
-            // Ideally, we would update the cached sections here if needed, 
-            // but for now we return the results to the agent.
-            return JSON.stringify({
-                message: "Successfully edited relevant sections.",
-                edits: editedSections.map(s => ({
-                    title: s.title,
-                    original: relevantSections.find(rs => rs.id === s.id)?.content,
-                    updated: s.content
-                }))
+            // ── Step 3: Confidence Check ──────────────────────────────────────
+            const bestMatch = topSections[0];
+            logger.info("edit_summary_sections: best match", {
+                title: bestMatch.title,
+                confidence: bestMatch.confidence,
+                threshold: LOW_CONFIDENCE_THRESHOLD,
             });
 
+            if (bestMatch.confidence < LOW_CONFIDENCE_THRESHOLD) {
+                logger.warn("edit_summary_sections: low confidence, requesting clarification", {
+                    confidence: bestMatch.confidence,
+                });
+                const output: ToolOutput = {
+                    message:
+                        `I couldn't confidently identify which section to edit (best match: "${bestMatch.title}", ` +
+                        `confidence: ${(bestMatch.confidence * 100).toFixed(0)}%). ` +
+                        `Could you be more specific? For example, mention the section name directly.`,
+                    edits: [],
+                    needsClarification: true,
+                };
+                return JSON.stringify(output);
+            }
+
+            // ── Step 4: Patch / Add — best match only ────────────────────────
+            // topSections is already sorted by confidence descending.
+            // We take only the single highest-confidence section so the patch
+            // target is unambiguous and easy to apply on the frontend.
+            const bestSection = bestMatch; // already the top result
+            const isAddOperation = intent.action === "add";
+
+            const original = bestSection.content;
+            const updatedContent = isAddOperation
+                ? await addToSection(bestSection, instruction, model)
+                : await patchSection(bestSection, instruction, model);
+
+            // ── Step 5: Cache Update ──────────────────────────────────────────
+            draftService.updateSection(userId, bestSection.id, updatedContent);
+
+            const edits: PatchResult[] = [
+                {
+                    title: bestSection.title,
+                    original,
+                    updated: updatedContent,
+                    confidence: bestSection.confidence,
+                },
+            ];
+
+            const output: ToolOutput = {
+                message: `Successfully ${isAddOperation ? "added to" : "updated"} section "${bestSection.title}".`,
+                edits,
+            };
+
+            logger.info("edit_summary_sections: completed", {
+                editCount: edits.length,
+                sections: edits.map((e) => e.title),
+            });
+
+            return JSON.stringify(output);
         } catch (error: any) {
-            logger.error("Summary editor tool failed", { error: error.message });
-            return `Error: ${error.message}`;
+            logger.error("edit_summary_sections: tool failed", {
+                error: error.message,
+                stack: error.stack,
+            });
+            return JSON.stringify({
+                message: `Error: ${error.message}`,
+                edits: [],
+            });
         }
-    }
+    },
 });
