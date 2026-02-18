@@ -1,5 +1,7 @@
 import { Request, Response } from "express";
 import { AgentService } from "../services/agent.service";
+import { DraftService } from "../services/draft.service";
+import { TranscriptionServiceFactory } from "../../voice-to-text/factories/transcription-service.factory";
 import logger from "../../logger";
 import { z } from "zod";
 import { BaseMessage } from "@langchain/core/messages";
@@ -23,9 +25,49 @@ const InvokeSchema = z.object({
  */
 export class AgentController {
     private agentService: AgentService;
+    private draftService: DraftService;
 
     constructor() {
         this.agentService = new AgentService();
+        this.draftService = new DraftService();
+    }
+
+    /**
+     * Handles draft preparation requests (Phase 1)
+     * POST /api/agent/prepare-draft
+     */
+    async prepareDraft(req: Request, res: Response) {
+        try {
+            const { draft } = req.body;
+            const userId = (req as any).user?.id || "anonymous";
+
+            if (!draft || typeof draft !== 'object') {
+                return res.status(400).json({
+                    success: false,
+                    error: "Invalid draft mapping provided",
+                });
+            }
+
+            const sections = await this.draftService.prepareDraft(userId, draft);
+
+            res.json({
+                success: true,
+                data: {
+                    sections: sections.map((s: any) => ({ id: s.id, title: s.title, content: s.content }))
+                }
+            });
+        } catch (error: any) {
+            logger.error("Agent controller prepareDraft error", {
+                error: error.message,
+                stack: error.stack,
+            });
+
+            res.status(500).json({
+                success: false,
+                error: "Failed to prepare draft",
+                message: error.message,
+            });
+        }
     }
 
     /**
@@ -147,6 +189,68 @@ export class AgentController {
                 );
                 res.end();
             }
+        }
+    }
+
+    /**
+     * Handles voice command processing
+     * POST /api/agent/voice-command
+     */
+    async processVoiceCommand(req: Request, res: Response) {
+        try {
+            const userId = (req as any).user?.id || "anonymous";
+            const { autoProcess } = req.body; // boolean flag
+
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    error: "No audio file provided",
+                });
+            }
+
+            // 1. Transcribe
+            const transcriptionService = TranscriptionServiceFactory.getService();
+            const transcribedText = await transcriptionService.transcribe(req.file.buffer, req.file.mimetype);
+
+            logger.info("Voice command transcribed", { userId, text: transcribedText, autoProcess });
+
+            if (autoProcess === 'true' || autoProcess === true) {
+                // 2. Direct Process: Invoke Agent
+                // We construct a simple message for the agent
+                const result = await this.agentService.invoke([
+                    { role: "user", content: transcribedText }
+                ], userId);
+
+                return res.json({
+                    success: true,
+                    data: {
+                        transcription: transcribedText,
+                        agentResponse: result,
+                        autoProcessed: true
+                    }
+                });
+            }
+
+            // 3. Confirmation Flow: Just return transcription
+            res.json({
+                success: true,
+                data: {
+                    transcription: transcribedText,
+                    autoProcessed: false
+                }
+            });
+
+        } catch (error: any) {
+            logger.error("Agent controller processVoiceCommand error", {
+                error: error.message,
+                stack: error.stack,
+            });
+
+            res.status(500).json({
+                success: false,
+                error: "Voice command processing failed",
+                message: error.message,
+            });
         }
     }
 }
