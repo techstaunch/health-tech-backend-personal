@@ -42,6 +42,7 @@ export class ElevenLabsTranscriptionService implements ITranscriptionService {
             const result = await this.client.speechToText.convert({
                 file: audioBlob,
                 modelId: "scribe_v2",
+                languageCode: "eng",
             });
 
             // Extract text from the response
