@@ -49,6 +49,7 @@ export class AzureTranscriptionService implements ITranscriptionService {
             const result = await this.client.audio.transcriptions.create({
                 file: audioFile,
                 model: AZURE_CONFIG.deploymentName,
+                language: "en",
             });
 
             logger.info("Azure OpenAI transcription completed successfully", {
