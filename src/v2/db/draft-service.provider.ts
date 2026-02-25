@@ -1,6 +1,6 @@
 import { SearchService } from "./search.service";
 import { DraftRepository } from "./draft.repository";
-import { DraftService } from "./draft.service";
+import { DraftService } from "./draft.service"; 
 /* ----------------------------------
    Singletons
 ---------------------------------- */
@@ -13,14 +13,14 @@ const searchService = new SearchService();
 ---------------------------------- */
 
 class DraftServiceProvider {
-    private instance: DraftService | null = null;
+  private instance: DraftService | null = null;
 
-    get(): DraftService {
-        if (!this.instance) {
-            this.instance = new DraftService(repository, searchService);
-        }
-        return this.instance;
+  get(): DraftService {
+    if (!this.instance) {
+      this.instance = new DraftService(repository, searchService);
     }
+    return this.instance;
+  }
 }
 
 export const draftServiceProvider = new DraftServiceProvider();
