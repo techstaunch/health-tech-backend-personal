@@ -1,4 +1,4 @@
-import { pool } from "./index";
+import pool from "./index";
 
 export type DbHealthStatus = {
   status: "up" | "down";

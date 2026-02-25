@@ -1,26 +1,38 @@
-import { Pool } from "pg";
+import pg from "pg"; 
 import logger from "../logger";
 
-const ssl =
-  process.env.PG_SSL === "true" ? { rejectUnauthorized: false } : false;
+const { Pool } = pg;
 
-export const pool = new Pool({
+const pool = new Pool({
   host: process.env.PG_HOST,
-  port: Number(process.env.PG_PORT),
+  port: Number(process.env.PG_PORT) || 5432,
   database: process.env.PG_DATABASE,
   user: process.env.PG_USER,
   password: process.env.PG_PASSWORD,
-  ssl,
+  ssl: { rejectUnauthorized: false },
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 15000
 });
 
 pool.on("connect", () => {
-  logger.info("DB connected");
-});
-
-pool.on("remove", () => {
-  logger.info("DB disconnected");
+  logger.info("New database connection established");
 });
 
 pool.on("error", (err) => {
-  logger.error(`DB connection error: ${err?.message || err}`);
+  logger.error("Unexpected database pool error", {
+    error: err.message,
+    stack: err.stack,
+  });
 });
+ 
+pool.query("SELECT NOW()").then(() => {
+  logger.info("Database connection verified");
+}).catch((err) => {
+  logger.error("Database connection failed on startup", {
+    error: err.message,
+  });
+  process.exit(1);
+});
+
+export default pool;
