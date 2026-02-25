@@ -13,398 +13,398 @@ import pool from "../../db";
 export const LOW_CONFIDENCE_THRESHOLD = 0.35;
 
 export class DraftService {
-    private embeddings = EmbeddingsService.getProvider();
+  private embeddings = EmbeddingsService.getProvider();
 
-    constructor(
-        private repository: DraftRepository,
-        private searchService: SearchService,
-    ) { }
+  constructor(
+    private repository: DraftRepository,
+    private searchService: SearchService,
+  ) {}
 
-    /* ================================
-       Prepare Draft
-    ================================= */
+  /* ================================
+     Prepare Draft
+  ================================= */
 
-    async prepareDraft(params: {
-        patientId: string;
-        accountNumber: string;
-        createdBy: string;
-        draft: Record<string, string>;
-        sectionReferences?: Record<string, Reference[]>;
-    }): Promise<DraftEntity> {
-        const draft = await this.repository.findOrCreateDraft({
-            patientId: params.patientId,
-            accountNumber: params.accountNumber,
-            createdBy: params.createdBy,
-        });
+  async prepareDraft(params: {
+    patientId: string;
+    accountNumber: string;
+    createdBy: string;
+    draft: Record<string, string>;
+    sectionReferences?: Record<string, Reference[]>;
+  }): Promise<DraftEntity> {
+    const draft = await this.repository.findOrCreateDraft({
+      patientId: params.patientId,
+      accountNumber: params.accountNumber,
+      createdBy: params.createdBy,
+    });
 
-        const entries = Object.entries(params.draft);
+    const entries = Object.entries(params.draft);
 
-        const embeddings = await this.embeddings.embedDocuments(
-            entries.map(([, c]) => c),
-        );
+    const embeddings = await this.embeddings.embedDocuments(
+      entries.map(([, c]) => c),
+    );
 
-        const allRefs: Reference[] = [];
-        const sections: SectionEntity[] = [];
+    const allRefs: Reference[] = [];
+    const sections: SectionEntity[] = [];
 
-        for (let i = 0; i < entries.length; i++) {
-            const [title, content] = entries[i];
+    for (let i = 0; i < entries.length; i++) {
+      const [title, content] = entries[i];
 
-            const refs = params.sectionReferences?.[title] ?? [];
+      const refs = params.sectionReferences?.[title] ?? [];
 
-            refs.forEach((r) => allRefs.push(r));
+      refs.forEach((r) => allRefs.push(r));
 
-            sections.push(
-                new SectionEntity({
-                    id: crypto.randomUUID(),
-                    title,
-                    content,
-                    referenceIds: refs.map((r) => r.id),
-                    embedding: embeddings[i],
-                }),
-            );
-        }
-
-        const uniqueRefs = Array.from(
-            new Map(allRefs.map((r) => [r.id, r])).values(),
-        );
-
-        if (uniqueRefs.length) {
-            await this.repository.upsertReferences(
-                draft.id,
-                uniqueRefs,
-            );
-        }
-
-        await this.repository.upsertSections(
-            draft.id,
-            sections,
-        );
-
-        const versionId =
-            await this.repository.createVersion({
-                draftId: draft.id,
-                version: 0,
-                createdBy: params.createdBy,
-                isRollback: false,
-            });
-
-        await this.repository.saveVersionSections(
-            versionId,
-            sections,
-        );
-
-        await this.repository.updateDraftMeta(
-            draft.id,
-            0,
-            1,
-        );
-
-        draft.restoreSections(sections);
-        draft.addOrUpdateReferences(uniqueRefs);
-
-        this.searchService.buildIndex(draft);
-
-        logger.info("Draft prepared", {
-            patientId: params.patientId,
-            accountNumber: params.accountNumber,
-        });
-
-        return draft;
+      sections.push(
+        new SectionEntity({
+          id: crypto.randomUUID(),
+          title,
+          content,
+          referenceIds: refs.map((r) => r.id),
+          embedding: embeddings[i],
+        }),
+      );
     }
 
-    /* ================================
-       Load Draft (Read-only - reads from IMMUTABLE version_sections)
-    ================================= */
+    const uniqueRefs = Array.from(
+      new Map(allRefs.map((r) => [r.id, r])).values(),
+    );
 
-    async getDraft(
-        patientId: string,
-        accountNumber: string,
-    ): Promise<DraftEntity | null> {
-        const draft =
-            await this.repository.getDraftMeta(
-                patientId,
-                accountNumber,
-            );
-
-        if (!draft) return null;
-
-        // FIXED: Read from IMMUTABLE version_sections table using current_version
-        // This ensures we always get the last committed state, not the mutable sections table
-        const sections = await this.repository.getVersionSnapshot(
-            draft.id,
-            draft.currentVersionNumber,
-        );
-
-        if (sections) {
-            draft.restoreSections(sections);
-        }
-
-        const refs =
-            await this.repository.getDraftReferences(
-                draft.id,
-            );
-
-        draft.restoreReferences(refs);
-
-        this.searchService.buildIndex(draft);
-
-        return draft;
+    if (uniqueRefs.length) {
+      await this.repository.upsertReferences(
+        draft.id,
+        uniqueRefs,
+      );
     }
 
+    await this.repository.upsertSections(
+      draft.id,
+      sections,
+    );
 
-    async updateSection(params: {
-        patientId: string;
-        accountNumber: string;
-        sectionId: string;
-        newContent: string;
-        newReferences: Reference[];
-    }): Promise<void> {
-        const draft = await this.getDraft(
-            params.patientId,
-            params.accountNumber,
-        );
+    const versionId =
+      await this.repository.createVersion({
+        draftId: draft.id,
+        version: 0,
+        createdBy: params.createdBy,
+        isRollback: false,
+      });
 
-        if (!draft) throw new Error("Draft not found");
+    await this.repository.saveVersionSections(
+      versionId,
+      sections,
+    );
 
-        const section = draft.getSection(params.sectionId);
+    await this.repository.updateDraftMeta(
+      draft.id,
+      0,
+      1,
+    );
 
-        if (!section) throw new Error("Section not found");
+    draft.restoreSections(sections);
+    draft.addOrUpdateReferences(uniqueRefs);
 
-        const [embedding] =
-            await this.embeddings.embedDocuments([
-                params.newContent,
-            ]);
+    this.searchService.buildIndex(draft);
 
-        if (params.newReferences.length) {
-            draft.addOrUpdateReferences(params.newReferences);
+    logger.info("Draft prepared", {
+      patientId: params.patientId,
+      accountNumber: params.accountNumber,
+    });
 
-            await this.repository.upsertReferences(
-                draft.id,
-                params.newReferences,
-            );
-        }
+    return draft;
+  }
 
-        section.update(
-            params.newContent,
-            params.newReferences.map((r) => r.id),
-            embedding,
-        );
+  /* ================================
+     Load Draft (Read-only - reads from IMMUTABLE version_sections)
+  ================================= */
 
-        // Update the mutable sections table for work-in-progress changes
-        await this.repository.upsertSections(
-            draft.id,
-            [section],
-        );
+  async getDraft(
+    patientId: string,
+    accountNumber: string,
+  ): Promise<DraftEntity | null> {
+    const draft =
+      await this.repository.getDraftMeta(
+        patientId,
+        accountNumber,
+      );
 
-        this.searchService.buildIndex(draft);
+    if (!draft) return null;
 
-        logger.info("Section updated", {
-            draftId: draft.id,
-            sectionId: params.sectionId,
-        });
+    // FIXED: Read from IMMUTABLE version_sections table using current_version
+    // This ensures we always get the last committed state, not the mutable sections table
+    const sections = await this.repository.getVersionSnapshot(
+      draft.id,
+      draft.currentVersionNumber,
+    );
+
+    if (sections) {
+      draft.restoreSections(sections);
     }
 
-    /* ================================
-       Commit Draft
-    ================================= */
+    const refs =
+      await this.repository.getDraftReferences(
+        draft.id,
+      );
 
-    async commitDraft(params: {
-        patientId: string;
-        accountNumber: string;
-        createdBy: string;
-    }): Promise<string> {
-        // Get the current working version from the mutable sections table
-        const draft =
-            await this.repository.getDraftMeta(
-                params.patientId,
-                params.accountNumber,
-            );
+    draft.restoreReferences(refs);
 
-        if (!draft) throw new Error("Draft not found");
+    this.searchService.buildIndex(draft);
 
-        // Read current working sections from the MUTABLE sections table
-        const workingSections = await this.repository.getCurrentSections(draft.id);
+    return draft;
+  }
+ 
 
-        if (!workingSections || workingSections.length === 0) {
-            throw new Error("No sections to commit");
-        }
+  async updateSection(params: {
+    patientId: string;
+    accountNumber: string;
+    sectionId: string;
+    newContent: string;
+    newReferences: Reference[];
+  }): Promise<void> {
+    const draft = await this.getDraft(
+      params.patientId,
+      params.accountNumber,
+    );
 
-        const newVersion = draft.nextVersionNumber;
+    if (!draft) throw new Error("Draft not found");
 
-        // Create a new immutable version snapshot
-        const versionId =
-            await this.repository.createVersion({
-                draftId: draft.id,
-                version: newVersion,
-                createdBy: params.createdBy,
-                isRollback: false,
-            });
+    const section = draft.getSection(params.sectionId);
 
-        // Save the working sections as an immutable version
-        await this.repository.saveVersionSections(
-            versionId,
-            workingSections,
-        );
+    if (!section) throw new Error("Section not found");
 
-        draft.advanceVersion();
+    const [embedding] =
+      await this.embeddings.embedDocuments([
+        params.newContent,
+      ]);
 
-        // Update the draft metadata to point to the new committed version
-        await this.repository.updateDraftMeta(
-            draft.id,
-            draft.currentVersionNumber,
-            draft.nextVersionNumber,
-        );
+    if (params.newReferences.length) {
+      draft.addOrUpdateReferences(params.newReferences);
 
-        logger.info("Draft committed", {
-            patientId: params.patientId,
-            accountNumber: params.accountNumber,
-            version: newVersion,
-        });
-
-        return `v${newVersion}`;
+      await this.repository.upsertReferences(
+        draft.id,
+        params.newReferences,
+      );
     }
 
-    /* ================================
-       Discard Changes (Reset to last committed version)
-    ================================= */
+    section.update(
+      params.newContent,
+      params.newReferences.map((r) => r.id),
+      embedding,
+    );
 
-    async discardDraft(params: {
-        patientId: string;
-        accountNumber: string;
-    }): Promise<boolean> {
-        const draft =
-            await this.repository.getDraftMeta(
-                params.patientId,
-                params.accountNumber,
-            );
+    // Update the mutable sections table for work-in-progress changes
+    await this.repository.upsertSections(
+      draft.id,
+      [section],
+    );
 
-        if (!draft) return false;
+    this.searchService.buildIndex(draft);
 
-        // Restore the mutable sections table from the last committed version
-        const restored =
-            await this.repository.overwriteWorkspaceFromVersion(
-                draft.id,
-                draft.currentVersionNumber,
-            );
+    logger.info("Section updated", {
+      draftId: draft.id,
+      sectionId: params.sectionId,
+    });
+  }
 
-        if (!restored) return false;
+  /* ================================
+     Commit Draft
+  ================================= */
 
-        draft.restoreSections(restored);
+  async commitDraft(params: {
+    patientId: string;
+    accountNumber: string;
+    createdBy: string;
+  }): Promise<string> {
+    // Get the current working version from the mutable sections table
+    const draft =
+      await this.repository.getDraftMeta(
+        params.patientId,
+        params.accountNumber,
+      );
 
-        const refs =
-            await this.repository.getDraftReferences(
-                draft.id,
-            );
+    if (!draft) throw new Error("Draft not found");
 
-        draft.restoreReferences(refs);
+    // Read current working sections from the MUTABLE sections table
+    const workingSections = await this.repository.getCurrentSections(draft.id);
 
-        this.searchService.buildIndex(draft);
-
-        logger.info("Draft discarded", {
-            draftId: draft.id,
-        });
-
-        return true;
+    if (!workingSections || workingSections.length === 0) {
+      throw new Error("No sections to commit");
     }
 
-    /* ================================
-       Rollback (Create new version from old version)
-    ================================= */
+    const newVersion = draft.nextVersionNumber;
 
-    async rollback(params: {
-        patientId: string;
-        accountNumber: string;
-        targetVersion: string;
-        createdBy: string;
-    }): Promise<boolean> {
-        const draft =
-            await this.repository.getDraftMeta(
-                params.patientId,
-                params.accountNumber,
-            );
+    // Create a new immutable version snapshot
+    const versionId =
+      await this.repository.createVersion({
+        draftId: draft.id,
+        version: newVersion,
+        createdBy: params.createdBy,
+        isRollback: false,
+      });
 
-        if (!draft) return false;
+    // Save the working sections as an immutable version
+    await this.repository.saveVersionSections(
+      versionId,
+      workingSections,
+    );
 
-        const versionNum = Number(
-            params.targetVersion.replace("v", ""),
-        );
+    draft.advanceVersion();
 
-        if (isNaN(versionNum))
-            throw new Error("Invalid version");
+    // Update the draft metadata to point to the new committed version
+    await this.repository.updateDraftMeta(
+      draft.id,
+      draft.currentVersionNumber,
+      draft.nextVersionNumber,
+    );
 
-        // Get the snapshot from the target version
-        const targetSnapshot = await this.repository.getVersionSnapshot(
-            draft.id,
-            versionNum,
-        );
+    logger.info("Draft committed", {
+      patientId: params.patientId,
+      accountNumber: params.accountNumber,
+      version: newVersion,
+    });
 
-        if (!targetSnapshot) return false;
+    return `v${newVersion}`;
+  }
 
-        // Overwrite the mutable sections table with the target version
-        const restored =
-            await this.repository.overwriteWorkspaceFromVersion(
-                draft.id,
-                versionNum,
-            );
+  /* ================================
+     Discard Changes (Reset to last committed version)
+  ================================= */
 
-        if (!restored) return false;
+  async discardDraft(params: {
+    patientId: string;
+    accountNumber: string;
+  }): Promise<boolean> {
+    const draft =
+      await this.repository.getDraftMeta(
+        params.patientId,
+        params.accountNumber,
+      );
 
-        const newVersion = draft.nextVersionNumber;
+    if (!draft) return false;
 
-        // Create a new version entry marked as a rollback
-        const versionId =
-            await this.repository.createVersion({
-                draftId: draft.id,
-                version: newVersion,
-                createdBy: params.createdBy,
-                isRollback: true,
-            });
+    // Restore the mutable sections table from the last committed version
+    const restored =
+      await this.repository.overwriteWorkspaceFromVersion(
+        draft.id,
+        draft.currentVersionNumber,
+      );
 
-        // Save the restored sections as the new version
-        await this.repository.saveVersionSections(
-            versionId,
-            restored,
-        );
+    if (!restored) return false;
 
-        draft.restoreSections(restored);
-        draft.advanceVersion();
+    draft.restoreSections(restored);
 
-        // Update metadata to point to the new version
-        await this.repository.updateDraftMeta(
-            draft.id,
-            draft.currentVersionNumber,
-            draft.nextVersionNumber,
-        );
+    const refs =
+      await this.repository.getDraftReferences(
+        draft.id,
+      );
 
-        this.searchService.buildIndex(draft);
+    draft.restoreReferences(refs);
 
-        logger.info("Draft rolled back", {
-            draftId: draft.id,
-            fromVersion: versionNum,
-            toVersion: newVersion,
-        });
+    this.searchService.buildIndex(draft);
 
-        return true;
-    }
+    logger.info("Draft discarded", {
+      draftId: draft.id,
+    });
 
-    /* ================================
-       History
-    ================================= */
+    return true;
+  }
 
-    async getHistory(
-        patientId: string,
-        accountNumber: string,
-    ) {
-        const draft =
-            await this.repository.getDraftMeta(
-                patientId,
-                accountNumber,
-            );
+  /* ================================
+     Rollback (Create new version from old version)
+  ================================= */
 
-        if (!draft) return null;
+  async rollback(params: {
+    patientId: string;
+    accountNumber: string;
+    targetVersion: string;
+    createdBy: string;
+  }): Promise<boolean> {
+    const draft =
+      await this.repository.getDraftMeta(
+        params.patientId,
+        params.accountNumber,
+      );
 
-        const { rows } = await pool.query(
-            `
+    if (!draft) return false;
+
+    const versionNum = Number(
+      params.targetVersion.replace("v", ""),
+    );
+
+    if (isNaN(versionNum))
+      throw new Error("Invalid version");
+
+    // Get the snapshot from the target version
+    const targetSnapshot = await this.repository.getVersionSnapshot(
+      draft.id,
+      versionNum,
+    );
+
+    if (!targetSnapshot) return false;
+
+    // Overwrite the mutable sections table with the target version
+    const restored =
+      await this.repository.overwriteWorkspaceFromVersion(
+        draft.id,
+        versionNum,
+      );
+
+    if (!restored) return false;
+
+    const newVersion = draft.nextVersionNumber;
+
+    // Create a new version entry marked as a rollback
+    const versionId =
+      await this.repository.createVersion({
+        draftId: draft.id,
+        version: newVersion,
+        createdBy: params.createdBy,
+        isRollback: true,
+      });
+
+    // Save the restored sections as the new version
+    await this.repository.saveVersionSections(
+      versionId,
+      restored,
+    );
+
+    draft.restoreSections(restored);
+    draft.advanceVersion();
+
+    // Update metadata to point to the new version
+    await this.repository.updateDraftMeta(
+      draft.id,
+      draft.currentVersionNumber,
+      draft.nextVersionNumber,
+    );
+
+    this.searchService.buildIndex(draft);
+
+    logger.info("Draft rolled back", {
+      draftId: draft.id,
+      fromVersion: versionNum,
+      toVersion: newVersion,
+    });
+
+    return true;
+  }
+
+  /* ================================
+     History
+  ================================= */
+
+  async getHistory(
+    patientId: string,
+    accountNumber: string,
+  ) {
+    const draft =
+      await this.repository.getDraftMeta(
+        patientId,
+        accountNumber,
+      );
+
+    if (!draft) return null;
+
+    const { rows } = await pool.query(
+      `
       SELECT
         version,
         created_by,
@@ -414,96 +414,96 @@ export class DraftService {
       WHERE draft_id = $1
       ORDER BY version ASC
       `,
-            [draft.id],
-        );
+      [draft.id],
+    );
 
-        return rows.map(
-            (h: {
-                version: number;
-                created_by: string;
-                created_at: string;
-                is_rollback: boolean;
-            }) => ({
-                version: `v${h.version}`,
-                createdBy: h.created_by,
-                timestamp: h.created_at,
-                isRollback: h.is_rollback,
-            }),
-        );
-    }
-
-    /* ================================
-       Search
-    ================================= */
-
-    async search(params: {
-        patientId: string;
-        accountNumber: string;
-        query: string;
-        limit?: number;
-    }) {
-        const draft = await this.getDraft(
-            params.patientId,
-            params.accountNumber,
-        );
-
-        if (!draft) throw new Error("Draft not found");
-
-        const [queryEmbedding] =
-            await this.embeddings.embedDocuments([
-                params.query,
-            ]);
-
-        return this.searchService.search(
-            draft,
-            params.query,
-            queryEmbedding,
-            params.limit ?? 3,
-        );
-    }
-
-    /* ================================
-       Get Version Snapshot (Read-only from immutable version_sections)
-    ================================= */
-
-    async getSnapshotByVersion(params: {
-        patientId: string;
-        accountNumber: string;
+    return rows.map(
+      (h: {
         version: number;
-    }) {
-        const draft =
-            await this.repository.getDraftMeta(
-                params.patientId,
-                params.accountNumber,
-            );
+        created_by: string;
+        created_at: string;
+        is_rollback: boolean;
+      }) => ({
+        version: `v${h.version}`,
+        createdBy: h.created_by,
+        timestamp: h.created_at,
+        isRollback: h.is_rollback,
+      }),
+    );
+  }
 
-        if (!draft) return null;
+  /* ================================
+     Search
+  ================================= */
 
-        // Read from IMMUTABLE version_sections table
-        const snapshot = await this.repository.getVersionSnapshot(
-            draft.id,
-            params.version,
-        );
+  async search(params: {
+    patientId: string;
+    accountNumber: string;
+    query: string;
+    limit?: number;
+  }) {
+    const draft = await this.getDraft(
+      params.patientId,
+      params.accountNumber,
+    );
 
-        if (!snapshot) return null;
+    if (!draft) throw new Error("Draft not found");
 
-        const history = await this.getHistory(
-            params.patientId,
-            params.accountNumber,
-        );
+    const [queryEmbedding] =
+      await this.embeddings.embedDocuments([
+        params.query,
+      ]);
 
-        const found = history?.find(
-            (h) => h.version === `v${params.version}`,
-        );
+    return this.searchService.search(
+      draft,
+      params.query,
+      queryEmbedding,
+      params.limit ?? 3,
+    );
+  }
 
-        if (!found) return null;
+  /* ================================
+     Get Version Snapshot (Read-only from immutable version_sections)
+  ================================= */
 
-        return {
-            version: params.version,
-            createdBy: found.createdBy,
-            timestamp: found.timestamp,
-            isRollback: found.isRollback,
-            sections: snapshot,
-        };
-    }
+  async getSnapshotByVersion(params: {
+    patientId: string;
+    accountNumber: string;
+    version: number;
+  }) {
+    const draft =
+      await this.repository.getDraftMeta(
+        params.patientId,
+        params.accountNumber,
+      );
+
+    if (!draft) return null;
+
+    // Read from IMMUTABLE version_sections table
+    const snapshot = await this.repository.getVersionSnapshot(
+      draft.id,
+      params.version,
+    );
+
+    if (!snapshot) return null;
+
+    const history = await this.getHistory(
+      params.patientId,
+      params.accountNumber,
+    );
+
+    const found = history?.find(
+      (h) => h.version === `v${params.version}`,
+    );
+
+    if (!found) return null;
+
+    return {
+      version: params.version,
+      createdBy: found.createdBy,
+      timestamp: found.timestamp,
+      isRollback: found.isRollback,
+      sections: snapshot,
+    };
+  }
 }
