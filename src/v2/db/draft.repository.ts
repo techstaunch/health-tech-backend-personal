@@ -1,9 +1,9 @@
 import pool from "../../db";
 import logger from "../../logger";
 
+import { Reference } from "../../agents/types/draft-summary";
 import { DraftEntity } from "./draft.entity";
 import { SectionEntity } from "./section.entity";
-import { Reference } from "../../agents/types/draft-summary";
 
 /* ================================
    UTF-8 Sanitization
@@ -187,13 +187,7 @@ export class DraftRepository {
           VALUES ($1, $2, $3, $4, $5)
           ON CONFLICT (id) DO NOTHING
           `,
-                    [
-                        clean.id,
-                        draftId,
-                        clean.url,
-                        clean.raw,
-                        clean.content,
-                    ],
+                    [clean.id, draftId, clean.url, clean.raw, clean.content],
                 );
             }
 
@@ -210,9 +204,7 @@ export class DraftRepository {
        References: Load
     ================================= */
 
-    async getDraftReferences(
-        draftId: string,
-    ): Promise<Reference[]> {
+    async getDraftReferences(draftId: string): Promise<Reference[]> {
         const { rows } = await pool.query(
             `
       SELECT id, url, raw, content
@@ -405,25 +397,28 @@ export class DraftRepository {
                 return null;
             }
 
-            await client.query(
-                `DELETE FROM sections WHERE draft_id = $1`,
-                [draftId],
-            );
+            await client.query(`DELETE FROM sections WHERE draft_id = $1`, [draftId]);
 
             for (const r of snapshot.rows) {
                 await client.query(
-                    `
-          INSERT INTO sections
-            (id, draft_id, title, content, embedding, updated_at)
-          VALUES ($1, $2, $3, $4, $5::vector, NOW())
-          `,
-                    [
-                        r.id,
-                        draftId,
-                        r.title,
-                        r.content,
-                        r.embedding,
-                    ],
+                    `INSERT INTO sections (
+    id,
+    draft_id,
+    title,
+    content,
+    embedding,
+    updated_at
+  )
+  VALUES ($1, $2, $3, $4, $5::vector, NOW())
+
+  ON CONFLICT (id)
+  DO UPDATE SET
+    title     = EXCLUDED.title,
+    content   = EXCLUDED.content,
+    embedding = EXCLUDED.embedding,
+    updated_at = NOW()
+  `,
+                    [r.id, draftId, r.title, r.content, r.embedding],
                 );
             }
 
@@ -452,10 +447,6 @@ export class DraftRepository {
         }
     }
 
-    /* ================================
-       Versions
-    ================================= */
-
     async createVersion(params: {
         draftId: string;
         version: number;
@@ -469,12 +460,7 @@ export class DraftRepository {
       VALUES ($1, $2, $3, $4)
       RETURNING id
       `,
-            [
-                params.draftId,
-                params.version,
-                params.createdBy,
-                params.isRollback,
-            ],
+            [params.draftId, params.version, params.createdBy, params.isRollback],
         );
 
         return rows[0].id;
