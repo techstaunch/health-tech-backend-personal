@@ -49,7 +49,7 @@ export class SectionEntity {
       title: this.title,
       content: this._content,
       referenceIds: this._referenceIds,
-      embedding: this._embedding,
+      // embedding: this._embedding,
     };
   }
 
