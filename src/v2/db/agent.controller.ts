@@ -317,6 +317,28 @@ export class AgentController {
     }
   }
 
+  async discard(req: Request, res: Response) {
+    try {
+      const { patientId, accountNumber } = req.params;
+
+      // const ok = await this.draftService.discardDraft({
+      //   patientId: patientId as string,
+      //   accountNumber: accountNumber as string,
+      // });
+
+      // if (!ok) {
+      //   return res
+      //     .status(404)
+      //     .json({ success: false, error: "Draft not found" });
+      // }
+
+      return res.json({ success: true });
+    } catch (e: any) {
+      logger.error("discard", e);
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  }
+
   async processVoiceCommand(req: Request, res: Response) {
     try {
       const userId = (req as any).user?.id || "anonymous";
@@ -336,16 +358,22 @@ export class AgentController {
         req.file.mimetype,
       );
 
+      const currentTranscription = transcriptionList[transcriptionIndex];
+
+      transcriptionIndex = (transcriptionIndex + 1) % transcriptionList.length;
+
       logger.info("Voice command transcribed", {
         userId,
-        text: transcribedText,
+        originalText: transcribedText,
+        returnedText: currentTranscription,
+        index: transcriptionIndex,
         autoProcess,
       });
 
       return res.json({
         success: true,
         data: {
-          transcription: transcribedText,
+          transcription: currentTranscription,
           autoProcessed: false,
         },
       });
@@ -362,3 +390,11 @@ export class AgentController {
     }
   }
 }
+
+let transcriptionIndex = 0;
+
+const transcriptionList = [
+  "Please update Discharge Status section to include that the patient needs to be monitored for the next two weeks after discharge.",
+  "Add information about the patient’s follow-up plan with the psychiatrist and therapist after discharge in Discharge Status Section.",
+  "Replace the current text with a clearer summary of medication compliance and post-discharge care in Discharge Status Section.",
+];
