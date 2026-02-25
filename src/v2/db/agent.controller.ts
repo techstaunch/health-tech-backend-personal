@@ -357,23 +357,19 @@ export class AgentController {
         req.file.buffer,
         req.file.mimetype,
       );
-
-      const currentTranscription = transcriptionList[transcriptionIndex];
-
-      transcriptionIndex = (transcriptionIndex + 1) % transcriptionList.length;
+ 
 
       logger.info("Voice command transcribed", {
         userId,
         originalText: transcribedText,
-        returnedText: currentTranscription,
-        index: transcriptionIndex,
+    
         autoProcess,
       });
 
       return res.json({
         success: true,
         data: {
-          transcription: currentTranscription,
+          transcription: transcribedText,
           autoProcessed: false,
         },
       });
@@ -390,11 +386,4 @@ export class AgentController {
     }
   }
 }
-
-let transcriptionIndex = 0;
-
-const transcriptionList = [
-  "Please update Discharge Status section to include that the patient needs to be monitored for the next two weeks after discharge.",
-  "Add information about the patient’s follow-up plan with the psychiatrist and therapist after discharge in Discharge Status Section.",
-  "Replace the current text with a clearer summary of medication compliance and post-discharge care in Discharge Status Section.",
-];
+ 
