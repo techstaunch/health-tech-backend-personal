@@ -317,6 +317,28 @@ export class AgentController {
         }
     }
 
+    async discard(req: Request, res: Response) {
+        try {
+            const { patientId, accountNumber } = req.params;
+
+            // const ok = await this.draftService.discardDraft({
+            //   patientId: patientId as string,
+            //   accountNumber: accountNumber as string,
+            // });
+
+            // if (!ok) {
+            //   return res
+            //     .status(404)
+            //     .json({ success: false, error: "Draft not found" });
+            // }
+
+            return res.json({ success: true });
+        } catch (e: any) {
+            logger.error("discard", e);
+            return res.status(500).json({ success: false, error: e.message });
+        }
+    }
+
     async processVoiceCommand(req: Request, res: Response) {
         try {
             const userId = (req as any).user?.id || "anonymous";
@@ -336,9 +358,11 @@ export class AgentController {
                 req.file.mimetype,
             );
 
+
             logger.info("Voice command transcribed", {
                 userId,
-                text: transcribedText,
+                originalText: transcribedText,
+
                 autoProcess,
             });
 
