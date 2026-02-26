@@ -85,6 +85,12 @@ export interface IntentResult {
     target: string;
     /** The new value or content to apply */
     value: string;
+    /** True when the user did NOT explicitly name a section */
+    isImplicit?: boolean;
+    /** Key clinical terms from the instruction for semantic matching */
+    contentKeywords?: string[];
+    /** The specific part of the original instruction related to this intent */
+    originalPhrase: string;
 }
 
 /**

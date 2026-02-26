@@ -19,14 +19,19 @@ export interface DraftContext {
  * Minimum normalized confidence score [0, 1] required to proceed with an edit.
  * Below this threshold the agent will ask the user for clarification.
  */
-export const LOW_CONFIDENCE_THRESHOLD = 0.35;
+export const LOW_CONFIDENCE_THRESHOLD = 0.50;
 
 /**
  * Weights for the hybrid score calculation.
- * keyword + semantic must sum to 1.0.
+ * keyword + semantic + content boost must sum to 1.0.
  */
-const KEYWORD_WEIGHT = 0.4;
-const SEMANTIC_WEIGHT = 0.6;
+const KEYWORD_WEIGHT = 0.35;
+const SEMANTIC_WEIGHT = 0.50;
+/**
+ * Bonus weight for verbatim keyword matches found inside section content.
+ * Proportional to the fraction of provided keywords found in the section text.
+ */
+const CONTENT_BOOST_WEIGHT = 0.15;
 
 export class DraftService {
     private static contexts = new Map<string, DraftContext>();
@@ -82,7 +87,11 @@ export class DraftService {
      *   score = (keywordHit ? KEYWORD_WEIGHT : 0) + (cosineSimilarity * SEMANTIC_WEIGHT)
      * Both components are already in [0, 1], so the combined score is in [0, 1].
      */
-    async hybridSearch(userId: string, query: string): Promise<ScoredSection[]> {
+    async hybridSearch(
+        userId: string,
+        query: string,
+        contentKeywords?: string[]
+    ): Promise<ScoredSection[]> {
         const context = DraftService.contexts.get(userId);
         if (!context) {
             throw new Error(
@@ -116,7 +125,14 @@ export class DraftService {
                 ? this.cosineSimilarity(queryEmbedding, s.embedding) * SEMANTIC_WEIGHT
                 : 0;
 
-            const score = Math.min(1, keywordScore + semanticScore); // clamp to [0, 1]
+            // Content-keyword boost: reward sections where user's verbatim
+            // keywords appear directly in the section text.
+            const contentBoost = this.contentKeywordBoost(
+                s.content,
+                contentKeywords
+            );
+
+            const score = Math.min(1, keywordScore + semanticScore + contentBoost);
 
             return { ...s, score, confidence: score };
         });
@@ -125,6 +141,7 @@ export class DraftService {
 
         logger.info("hybridSearch: top results", {
             results: results.map((r) => ({ title: r.title, confidence: r.confidence })),
+            contentKeywordsUsed: contentKeywords ?? [],
         });
 
         return results;
@@ -151,6 +168,35 @@ export class DraftService {
         logger.info("updateSection: cache updated", { userId, sectionId, title: section.title });
     }
 
+    /**
+     * Adds a completely new section to the draft.
+     */
+    async addSection(userId: string, title: string, content: string): Promise<Section> {
+        const context = DraftService.contexts.get(userId);
+        if (!context) {
+            throw new Error(`No draft context found for user ${userId}. Please prepare the draft first.`);
+        }
+
+        const newId = Math.max(...context.sections.map(s => s.id), -1) + 1;
+        const [embedding] = await this.embeddings.embedDocuments([content]);
+
+        const newSection: Section = {
+            id: newId,
+            title,
+            content,
+            embedding,
+        };
+
+        // Add to sections array
+        context.sections.push(newSection);
+
+        // Add to search index
+        context.index.add(newSection as any);
+
+        logger.info("addSection: added new section to draft", { userId, sectionId: newId, title });
+        return newSection;
+    }
+
     static clearContext(userId: string) {
         DraftService.contexts.delete(userId);
     }
@@ -170,5 +216,25 @@ export class DraftService {
         }
         const denom = Math.sqrt(normA) * Math.sqrt(normB);
         return denom === 0 ? 0 : dotProduct / denom;
+    }
+
+    /**
+     * Computes a normalised bonus score [0, CONTENT_BOOST_WEIGHT] based on how many
+     * of the provided keywords appear verbatim (case-insensitive) in sectionContent.
+     *
+     * Returns 0 when no keywords are provided.
+     */
+    private contentKeywordBoost(
+        sectionContent: string,
+        keywords?: string[]
+    ): number {
+        if (!keywords || keywords.length === 0) return 0;
+
+        const lowerContent = sectionContent.toLowerCase();
+        const matched = keywords.filter((kw) =>
+            lowerContent.includes(kw.toLowerCase())
+        ).length;
+
+        return (matched / keywords.length) * CONTENT_BOOST_WEIGHT;
     }
 }
