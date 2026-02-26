@@ -30,6 +30,14 @@ STRICT RULES:
 - Match the formatting style of existing items in the section
 - Return the FULL updated section content as plain text — no JSON, no markdown`;
 
+/**
+ * Updates (replaces/modifies) existing content within a section.
+ *
+ * @param section - The section to patch
+ * @param instruction - The user's original instruction
+ * @param model - A shared AzureChatOpenAI instance
+ * @returns The full updated section content as a string
+ */
 export async function patchSection(
   section: ScoredSection,
   instruction: string,
@@ -56,6 +64,14 @@ export async function patchSection(
   return updated;
 }
 
+/**
+ * Appends a new structured item to a section (e.g. new allergy, new medication).
+ *
+ * @param section - The section to append to
+ * @param instruction - The user's original instruction
+ * @param model - A shared AzureChatOpenAI instance
+ * @returns The full updated section content as a string
+ */
 export async function addToSection(
   section: ScoredSection,
   instruction: string,

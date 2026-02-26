@@ -11,16 +11,16 @@ import { addToSection, patchSection } from "./patch-editor";
 import { PatchResult, ToolOutput } from "../../agents/types/agent.types";
 
 import { createAzureOpenAIModel } from "../../agents/config/azure-openai.config";
-import { parseIntent } from "../../agents/tools/intent-parser";
+import { parseIntent } from "./intent-parser";
 
 const model = createAzureOpenAIModel();
-
 const draftService: DraftService = draftServiceProvider.get();
 
 export const summaryEditorTool = new DynamicStructuredTool({
   name: "edit_summary_sections",
 
-  description: "Edit discharge summary sections using natural language.",
+  description:
+    "Edit discharge summary sections using natural language with hybrid search and multi-intent support.",
 
   schema: z.object({
     instruction: z.string(),
@@ -43,71 +43,117 @@ export const summaryEditorTool = new DynamicStructuredTool({
         accountNumber,
       });
 
-      const intent = await parseIntent(instruction, model);
+      const intents = await parseIntent(instruction, model);
 
-      const searchQuery = `${intent.target} ${instruction}`.trim();
+      const allEdits: PatchResult[] = [];
+      const clarificationMessages: string[] = [];
+      const successMessages: string[] = [];
+      let needsClarification = false;
 
-      const topSections = await draftService.search({
-        patientId,
-        accountNumber,
-        query: searchQuery,
-        limit: 3,
-      });
+      for (const intent of intents) {
+        const searchQuery =
+          intent.isImplicit && intent.contentKeywords?.length
+            ? `${intent.contentKeywords.join(" ")} ${intent.originalPhrase}`.trim()
+            : `${intent.target} ${intent.originalPhrase}`.trim();
 
-      if (!topSections.length) {
-        return JSON.stringify({
-          message: "No matching sections found.",
-          edits: [],
-          needsClarification: false,
+        const candidateSections = await draftService.search({
+          patientId,
+          accountNumber,
+          query: searchQuery,
+          contentKeywords: intent.isImplicit
+            ? intent.contentKeywords
+            : undefined,
+          limit: 5,
         });
+
+        if (!candidateSections.length) {
+          clarificationMessages.push(
+            `No sections found for "${intent.target}".`,
+          );
+          continue;
+        }
+
+        const topConfidence = candidateSections[0].confidence;
+
+        const targetSections = candidateSections.filter(
+          (s, idx) => {
+            if (s.confidence < LOW_CONFIDENCE_THRESHOLD)
+              return false;
+
+            if (idx === 0) return true;
+
+            return (
+              topConfidence - s.confidence < 0.15 ||
+              s.confidence > 0.6
+            );
+          },
+        );
+
+        if (!targetSections.length) {
+          needsClarification = true;
+          clarificationMessages.push(
+            `Low confidence for "${intent.target}" (best: "${candidateSections[0].title}" ${(candidateSections[0].confidence * 100).toFixed(0)}%).`,
+          );
+          continue;
+        }
+
+        let intentHandled = false;
+
+        for (const section of targetSections) {
+          const isAdd = intent.action === "add";
+          const original = section.content;
+
+          const updated = isAdd
+            ? await addToSection(section as any, intent.originalPhrase, model)
+            : await patchSection(section as any, intent.originalPhrase, model);
+
+          if (updated.trim() !== original.trim()) {
+            await draftService.updateSection({
+              patientId,
+              accountNumber,
+              sectionId: section.sectionId,
+              newContent: updated,
+              newReferences: [],
+            });
+
+            allEdits.push({
+              title: section.title,
+              original,
+              updated,
+              confidence: section.confidence,
+            });
+
+            successMessages.push(
+              `${isAdd ? "Added to" : "Updated"} "${section.title}".`,
+            );
+
+            intentHandled = true;
+          }
+        }
+
+        if (!intentHandled && targetSections.length === 1) {
+          clarificationMessages.push(
+            `Identified "${targetSections[0].title}" but no changes applied.`,
+          );
+        }
       }
 
-      const best = topSections[0];
-
-      if (best.confidence < LOW_CONFIDENCE_THRESHOLD) {
-        return JSON.stringify({
-          message: `Low confidence (${(best.confidence * 100).toFixed(
-            0,
-          )}%). Please clarify.`,
-          edits: [],
-          needsClarification: true,
-        });
-      }
-
-      const isAdd = intent.action === "add";
-
-      const original = best.content;
-
-      const updated = isAdd
-        ? await addToSection(best as any, instruction, model)
-        : await patchSection(best as any, instruction, model);
-
-      await draftService.updateSection({
-        patientId,
-        accountNumber,
-        sectionId: best.sectionId,
-        newContent: updated,
-        newReferences: [],
-      });
-
-      const edits: PatchResult[] = [
-        {
-          title: best.title,
-          original,
-          updated,
-          confidence: best.confidence,
-        },
-      ];
+      const message = [
+        ...successMessages,
+        ...clarificationMessages,
+      ].join(" ");
 
       const output: ToolOutput = {
-        message: `Updated "${best.title}"`,
-        edits,
-        needsClarification: false,
+        message: message || "No actions performed.",
+        edits: allEdits,
+        needsClarification:
+          needsClarification ||
+          (allEdits.length === 0 &&
+            clarificationMessages.length > 0),
       };
 
-      logger.info("Edit completed", {
-        section: best.title,
-        userId,
+      logger.info("Summary editor completed", {
+        editCount: allEdits.length,
       });
 
       return JSON.stringify(output);

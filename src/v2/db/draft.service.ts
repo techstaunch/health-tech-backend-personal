@@ -10,7 +10,8 @@ import { SearchService } from "./search.service";
 import { DraftEntity } from "./draft.entity";
 import { SectionEntity } from "./section.entity";
 import pool from "../../db";
-export const LOW_CONFIDENCE_THRESHOLD = 0.35;
+
+export const LOW_CONFIDENCE_THRESHOLD = 0.50;
 
 export class DraftService {
   private embeddings = EmbeddingsService.getProvider();
@@ -440,6 +441,7 @@ export class DraftService {
     patientId: string;
     accountNumber: string;
     query: string;
+    contentKeywords?: string[];
     limit?: number;
   }) {
     const draft = await this.getDraft(
@@ -458,6 +460,7 @@ export class DraftService {
       draft,
       params.query,
       queryEmbedding,
+      params.contentKeywords,
       params.limit ?? 3,
     );
   }

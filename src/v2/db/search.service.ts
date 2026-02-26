@@ -2,8 +2,9 @@ import FlexSearch from "flexsearch";
 import { DraftEntity } from "./draft.entity";
 import { SectionEntity } from "./section.entity";
 
-const KEYWORD_WEIGHT = 0.4;
-const SEMANTIC_WEIGHT = 0.6;
+const KEYWORD_WEIGHT = 0.35;
+const SEMANTIC_WEIGHT = 0.50;
+const CONTENT_BOOST_WEIGHT = 0.15;
 
 interface SearchContext {
   index: any;
@@ -48,6 +49,7 @@ export class SearchService {
     draft: DraftEntity,
     query: string,
     queryEmbedding: number[],
+    contentKeywords?: string[],
     limit = 3,
   ) {
     const ctx = this.contexts.get(draft.id);
@@ -82,9 +84,14 @@ export class SearchService {
           ) * SEMANTIC_WEIGHT
         : 0;
 
+      const contentBoost = this.contentKeywordBoost(
+        s.content,
+        contentKeywords,
+      );
+
       const score = Math.min(
         1,
-        keywordScore + semanticScore,
+        keywordScore + semanticScore + contentBoost,
       );
 
       return {
@@ -116,5 +123,20 @@ export class SearchService {
 
     const denom = Math.sqrt(na) * Math.sqrt(nb);
     return denom === 0 ? 0 : dot / denom;
+  }
+
+  private contentKeywordBoost(
+    sectionContent: string,
+    keywords?: string[],
+  ): number {
+    if (!keywords?.length) return 0;
+
+    const lower = sectionContent.toLowerCase();
+
+    const matched = keywords.filter((kw) =>
+      lower.includes(kw.toLowerCase()),
+    ).length;
+
+    return (matched / keywords.length) * CONTENT_BOOST_WEIGHT;
   }
 }
