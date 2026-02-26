@@ -129,3 +129,19 @@ export interface ToolOutput {
     /** True when the agent should ask the user for more specific input */
     needsClarification?: boolean;
 }
+
+/**
+ * Data fetched from an external source based on a document ID.
+ */
+export interface EnrichedData {
+    /** The ID extracted from the document (e.g., T263517) */
+    id: string;
+    /** The content retrieved from the external API */
+    content: string;
+    /** Whether the data was found and successfully retrieved */
+    found: boolean;
+    /** Optional title or source information */
+    title?: string;
+    /** Optional relevance score */
+    relevance?: number;
+}

@@ -19,7 +19,7 @@ export class DraftService {
   constructor(
     private repository: DraftRepository,
     private searchService: SearchService,
-  ) {}
+  ) { }
 
   /* ================================
      Prepare Draft
@@ -151,7 +151,7 @@ export class DraftService {
 
     return draft;
   }
- 
+
 
   async updateSection(params: {
     patientId: string;

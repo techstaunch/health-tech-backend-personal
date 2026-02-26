@@ -154,9 +154,9 @@ export class DraftRepository {
           referenceIds: r.reference_ids,
           embedding: r.embedding
             ? r.embedding
-                .replace(/[\[\]]/g, "")
-                .split(",")
-                .map(Number)
+              .replace(/[\[\]]/g, "")
+              .split(",")
+              .map(Number)
             : undefined,
         }),
     );
@@ -212,6 +212,32 @@ export class DraftRepository {
       WHERE draft_id = $1
       `,
       [draftId],
+    );
+
+    return rows.map((r) => ({
+      id: r.id,
+      url: r.url,
+      raw: r.raw,
+      content: r.content,
+    }));
+  }
+
+  /* ================================
+     References: Get By IDs (Global)
+  ================================ */
+
+  async getReferencesByIds(
+    referenceIds: string[],
+  ): Promise<Reference[]> {
+    if (!referenceIds.length) return [];
+
+    const { rows } = await pool.query(
+      `
+    SELECT id, url, raw, content
+    FROM draft_references
+    WHERE id = ANY($1::text[])
+    `,
+      [referenceIds],
     );
 
     return rows.map((r) => ({
@@ -340,9 +366,9 @@ export class DraftRepository {
           referenceIds: r.reference_ids,
           embedding: r.embedding
             ? r.embedding
-                .replace(/[\[\]]/g, "")
-                .split(",")
-                .map(Number)
+              .replace(/[\[\]]/g, "")
+              .split(",")
+              .map(Number)
             : undefined,
         }),
     );
@@ -433,9 +459,9 @@ export class DraftRepository {
             referenceIds: r.reference_ids,
             embedding: r.embedding
               ? r.embedding
-                  .replace(/[\[\]]/g, "")
-                  .split(",")
-                  .map(Number)
+                .replace(/[\[\]]/g, "")
+                .split(",")
+                .map(Number)
               : undefined,
           }),
       );

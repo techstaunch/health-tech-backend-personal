@@ -1,8 +1,9 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { DraftService, LOW_CONFIDENCE_THRESHOLD } from "../services/draft.service";
+import { DataEnrichmentService } from "../services/data-enrichment.service";
 import { createAzureOpenAIModel } from "../config/azure-openai.config";
-import { parseIntent } from "./intent-parser";
+import { parseIntent, validateIntent } from "./intent-parser";
 import { patchSection, addToSection } from "./patch-editor";
 import { PatchResult, ToolOutput } from "../types/agent.types";
 import logger from "../../logger";
@@ -10,6 +11,7 @@ import logger from "../../logger";
 // Shared model instance — created once, reused for all sub-calls within the tool
 const model = createAzureOpenAIModel();
 const draftService = new DraftService();
+const enrichmentService = new DataEnrichmentService();
 
 /**
  * edit_summary_sections — Super Agent Tool
@@ -42,6 +44,22 @@ export const summaryEditorTool = new DynamicStructuredTool({
             // ── Step 1: Intent Detection ──────────────────────────────────────
             const intents = await parseIntent(instruction, model);
             logger.info("edit_summary_sections: intents detected", { count: intents.length });
+
+            // ── Step 1.5: Intent Validation ───────────────────────────────────
+            const validation = await validateIntent(instruction, intents, model);
+            if (!validation.isValid) {
+                logger.warn("edit_summary_sections: intent validation failed", {
+                    reason: validation.reason,
+                    instruction,
+                });
+
+                return JSON.stringify({
+                    message: `I'm not sure I correctly understood your instruction: ${validation.reason || "I couldn't clarify the specific edits needed."
+                        } Could you please rephrase or provide more details?`,
+                    edits: [],
+                    needsClarification: true,
+                } as ToolOutput);
+            }
 
             const allEdits: PatchResult[] = [];
             let needsClarification = false;
@@ -97,9 +115,18 @@ export const summaryEditorTool = new DynamicStructuredTool({
                     const isAddOperation = intent.action === "add";
                     const original = section.content;
 
+                    // ── Step 3.5: Data Enrichment ──────────────────────────────────
+                    const extractedIds = enrichmentService.extractIds(original);
+                    let enrichedData = undefined;
+
+                    if (extractedIds.length > 0) {
+                        const rawEnrichedData = await enrichmentService.fetchEnrichedData(extractedIds);
+                        enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, intent.originalPhrase, model);
+                    }
+
                     const updatedContent = isAddOperation
-                        ? await addToSection(section, intent.originalPhrase, model)
-                        : await patchSection(section, intent.originalPhrase, model);
+                        ? await addToSection(section, intent.originalPhrase, model, enrichedData)
+                        : await patchSection(section, intent.originalPhrase, model, enrichedData);
 
                     // Check if a change actually occurred
                     if (updatedContent.trim() !== original.trim()) {

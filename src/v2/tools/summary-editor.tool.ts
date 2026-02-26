@@ -5,16 +5,18 @@ import logger from "../../logger";
 
 import { draftServiceProvider } from "../db/draft-service.provider";
 import { DraftService, LOW_CONFIDENCE_THRESHOLD } from "../db/draft.service";
+import { DataEnrichmentService } from "../db/data-enrichment.service";
 
 import { addToSection, patchSection } from "./patch-editor";
 
 import { PatchResult, ToolOutput } from "../../agents/types/agent.types";
 
 import { createAzureOpenAIModel } from "../../agents/config/azure-openai.config";
-import { parseIntent } from "./intent-parser";
+import { parseIntent, validateIntent } from "./intent-parser";
 
 const model = createAzureOpenAIModel();
 const draftService: DraftService = draftServiceProvider.get();
+const enrichmentService = new DataEnrichmentService();
 
 export const summaryEditorTool = new DynamicStructuredTool({
   name: "edit_summary_sections",
@@ -45,6 +47,22 @@ export const summaryEditorTool = new DynamicStructuredTool({
 
       const intents = await parseIntent(instruction, model);
 
+      const validation = await validateIntent(instruction, intents, model);
+      console.log('validation', validation);
+      if (!validation.isValid) {
+        logger.warn("edit_summary_sections: intent validation failed", {
+          reason: validation.reason,
+          instruction,
+        });
+
+        return JSON.stringify({
+          message: `I'm not sure I correctly understood your instruction: ${validation.reason || "I couldn't clarify the specific edits needed."}
+                        Could you please rephrase or provide more details?`,
+          edits: [],
+          needsClarification: true,
+        } as ToolOutput);
+      }
+
       const allEdits: PatchResult[] = [];
       const clarificationMessages: string[] = [];
       const successMessages: string[] = [];
@@ -63,7 +81,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
           contentKeywords: intent.isImplicit
             ? intent.contentKeywords
             : undefined,
-          limit: 5,
+          limit: 3,
         });
 
         if (!candidateSections.length) {
@@ -103,9 +121,17 @@ export const summaryEditorTool = new DynamicStructuredTool({
           const isAdd = intent.action === "add";
           const original = section.content;
 
+          const extractedIds = enrichmentService.extractIds(original);
+          let enrichedData = undefined;
+
+          if (extractedIds.length > 0) {
+            const rawEnrichedData = await enrichmentService.fetchEnrichedData(extractedIds);
+            enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, intent.originalPhrase, model);
+          }
+
           const updated = isAdd
-            ? await addToSection(section as any, intent.originalPhrase, model)
-            : await patchSection(section as any, intent.originalPhrase, model);
+            ? await addToSection(section as any, intent.originalPhrase, model, enrichedData)
+            : await patchSection(section as any, intent.originalPhrase, model, enrichedData);
 
           if (updated.trim() !== original.trim()) {
             await draftService.updateSection({

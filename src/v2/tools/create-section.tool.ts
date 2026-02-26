@@ -114,7 +114,7 @@ Return ONLY valid JSON:
 
         return JSON.stringify(output);
       }
- 
+
       const [embedding] = await draftService["embeddings"].embedDocuments([
         parsed.generatedContent,
       ]);
@@ -126,9 +126,9 @@ Return ONLY valid JSON:
         referenceIds: [],
         embedding,
       });
- 
+
       await draftService["repository"].upsertSections(draft.id, [newSection]);
- 
+
       await draftService.getDraft(patientId, accountNumber);
 
       const output: ToolOutput = {
