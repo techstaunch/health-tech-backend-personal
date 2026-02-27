@@ -51,10 +51,12 @@ export class SearchService {
     queryEmbedding: number[],
     contentKeywords?: string[],
     limit = 3,
-  ) {
-    const ctx = this.contexts.get(draft.id);
-    if (!ctx) throw new Error("Index not built");
+  ) { 
+    if (!this.contexts.has(draft.id)) {
+      this.buildIndex(draft);
+    }
 
+    const ctx = this.contexts.get(draft.id)!;
     const { index, sections } = ctx;
 
     const keywordResults = index.search(query, {
@@ -66,33 +68,20 @@ export class SearchService {
 
     if (Array.isArray(keywordResults)) {
       for (const r of keywordResults) {
-        r?.result?.forEach((id: string) =>
-          keywordHitIds.add(id),
-        );
+        r?.result?.forEach((id: string) => keywordHitIds.add(id));
       }
     }
 
     const scored = sections.map((s) => {
-      const keywordScore = keywordHitIds.has(s.id)
-        ? KEYWORD_WEIGHT
-        : 0;
+      const keywordScore = keywordHitIds.has(s.id) ? KEYWORD_WEIGHT : 0;
 
       const semanticScore = s.embedding
-        ? this.cosineSimilarity(
-            queryEmbedding,
-            s.embedding,
-          ) * SEMANTIC_WEIGHT
+        ? this.cosineSimilarity(queryEmbedding, s.embedding) * SEMANTIC_WEIGHT
         : 0;
 
-      const contentBoost = this.contentKeywordBoost(
-        s.content,
-        contentKeywords,
-      );
+      const contentBoost = this.contentKeywordBoost(s.content, contentKeywords);
 
-      const score = Math.min(
-        1,
-        keywordScore + semanticScore + contentBoost,
-      );
+      const score = Math.min(1, keywordScore + semanticScore + contentBoost);
 
       return {
         sectionId: s.id,
@@ -107,10 +96,7 @@ export class SearchService {
       .slice(0, limit);
   }
 
-  private cosineSimilarity(
-    a: number[],
-    b: number[],
-  ): number {
+  private cosineSimilarity(a: number[], b: number[]): number {
     let dot = 0;
     let na = 0;
     let nb = 0;

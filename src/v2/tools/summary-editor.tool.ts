@@ -3,9 +3,9 @@ import { z } from "zod";
 
 import logger from "../../logger";
 
+import { DataEnrichmentService } from "../db/data-enrichment.service";
 import { draftServiceProvider } from "../db/draft-service.provider";
 import { DraftService, LOW_CONFIDENCE_THRESHOLD } from "../db/draft.service";
-import { DataEnrichmentService } from "../db/data-enrichment.service";
 
 import { addToSection, patchSection } from "./patch-editor";
 
@@ -48,7 +48,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
       const intents = await parseIntent(instruction, model);
 
       const validation = await validateIntent(instruction, intents, model);
-      console.log('validation', validation);
+      console.log("validation", validation);
       if (!validation.isValid) {
         logger.warn("edit_summary_sections: intent validation failed", {
           reason: validation.reason,
@@ -67,6 +67,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
       const clarificationMessages: string[] = [];
       const successMessages: string[] = [];
       let needsClarification = false;
+      console.log("intents", intents);
 
       for (const intent of intents) {
         const searchQuery =
@@ -81,8 +82,10 @@ export const summaryEditorTool = new DynamicStructuredTool({
           contentKeywords: intent.isImplicit
             ? intent.contentKeywords
             : undefined,
-          limit: 3,
+          limit: 5,
         });
+        console.log("intent", intent);
+        console.log("candidateSections", candidateSections);
 
         if (!candidateSections.length) {
           clarificationMessages.push(
@@ -91,21 +94,33 @@ export const summaryEditorTool = new DynamicStructuredTool({
           continue;
         }
 
-        const topConfidence = candidateSections[0].confidence;
+        const exactMatch = !intent.isImplicit
+          ? candidateSections.find(
+              (s) =>
+                s.title.trim().toLowerCase() ===
+                intent.target.trim().toLowerCase(),
+            )
+          : null;
 
-        const targetSections = candidateSections.filter(
-          (s, idx) => {
-            if (s.confidence < LOW_CONFIDENCE_THRESHOLD)
-              return false;
+        let targetSections = [];
+
+        if (exactMatch) {
+          logger.info("Exact match found for non-implicit intent", {
+            target: intent.target,
+            sectionId: exactMatch.sectionId,
+          });
+          targetSections = [exactMatch];
+        } else {
+          const topConfidence = candidateSections[0].confidence;
+
+          targetSections = candidateSections.filter((s, idx) => {
+            if (s.confidence < LOW_CONFIDENCE_THRESHOLD) return false;
 
             if (idx === 0) return true;
 
-            return (
-              topConfidence - s.confidence < 0.15 ||
-              s.confidence > 0.6
-            );
-          },
-        );
+            return topConfidence - s.confidence < 0.15 || s.confidence > 0.6;
+          });
+        }
 
         if (!targetSections.length) {
           needsClarification = true;
@@ -121,17 +136,17 @@ export const summaryEditorTool = new DynamicStructuredTool({
           const isAdd = intent.action === "add";
           const original = section.content;
 
-          const extractedIds = enrichmentService.extractIds(original);
-          let enrichedData = undefined;
+          // const extractedIds = enrichmentService.extractIds(original);
+          // let enrichedData = undefined;
 
-          if (extractedIds.length > 0) {
-            const rawEnrichedData = await enrichmentService.fetchEnrichedData(extractedIds);
-            enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, intent.originalPhrase, model);
-          }
+          // if (extractedIds.length > 0) {
+          //   const rawEnrichedData = await enrichmentService.fetchEnrichedData(extractedIds);
+          //   enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, intent.originalPhrase, model);
+          // }
 
           const updated = isAdd
-            ? await addToSection(section as any, intent.originalPhrase, model, enrichedData)
-            : await patchSection(section as any, intent.originalPhrase, model, enrichedData);
+            ? await addToSection(section as any, intent.originalPhrase, model)
+            : await patchSection(section as any, intent.originalPhrase, model);
 
           if (updated.trim() !== original.trim()) {
             await draftService.updateSection({
@@ -164,18 +179,14 @@ export const summaryEditorTool = new DynamicStructuredTool({
         }
       }
 
-      const message = [
-        ...successMessages,
-        ...clarificationMessages,
-      ].join(" ");
+      const message = [...successMessages, ...clarificationMessages].join(" ");
 
       const output: ToolOutput = {
         message: message || "No actions performed.",
         edits: allEdits,
         needsClarification:
           needsClarification ||
-          (allEdits.length === 0 &&
-            clarificationMessages.length > 0),
+          (allEdits.length === 0 && clarificationMessages.length > 0),
       };
 
       logger.info("Summary editor completed", {
