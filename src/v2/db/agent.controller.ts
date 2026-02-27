@@ -100,6 +100,55 @@ export class AgentController {
       });
     }
   }
+
+  async saveInline(req: Request, res: Response) {
+    try {
+      const { patientId, accountNumber, sections } = req.body;
+
+      const createdBy = (req as any).user?.id || "anonymous";
+
+      if (!patientId || !accountNumber) {
+        return res.status(400).json({
+          message: "patientId and accountNumber are required",
+        });
+      }
+
+      if (!Array.isArray(sections) || sections.length === 0) {
+        return res.status(400).json({
+          message: "sections must be a non-empty array",
+        });
+      }
+
+      for (const s of sections) {
+        if (!s.id || !s.title || typeof s.content !== "string") {
+          return res.status(400).json({
+            message: "Each section must have id, title and content",
+          });
+        }
+      }
+
+      const draft = await this.draftService.saveInlineVersion({
+        patientId,
+        accountNumber,
+        createdBy,
+        sections,
+      });
+
+      return res.status(200).json({
+        message: "Version saved successfully",
+        draft: draft.toJSON(),
+      });
+    } catch (error) {
+      logger.error("Error in saveInlineVersionController", {
+        body: req.body,
+        error,
+      });
+
+      return res.status(500).json({
+        message: "Failed to save inline version",
+      });
+    }
+  }
   async getDraft(req: Request, res: Response) {
     try {
       const { patientId, accountNumber } = req.params;

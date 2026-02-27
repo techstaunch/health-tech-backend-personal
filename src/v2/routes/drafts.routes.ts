@@ -46,10 +46,12 @@ router.post("/voice-command", upload.single("audio"), (req, res) =>
   controller.processVoiceCommand(req, res),
 );
 
-
 router.post("/drafts/:patientId/:accountNumber/discard", (req, res) =>
   controller.discard(req, res),
 );
 
+router.post("/drafts/:patientId/:accountNumber/save-inline", (req, res) =>
+  controller.saveInline(req, res),
+);
 
 export default router;

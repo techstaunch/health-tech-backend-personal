@@ -326,8 +326,7 @@ export class DraftRepository {
         await client.query("COMMIT");
         return;
       }
-
-      // 4. Single batch SELECT to resolve text reference_id → UUID primary key
+ 
       const { rows: refRows } = await client.query(
         `
         SELECT id, reference_id
@@ -337,13 +336,11 @@ export class DraftRepository {
         `,
         [allReferenceIds, draftId],
       );
-
-      // Build a lookup map: text reference_id → UUID pk
+ 
       const refIdToPk = new Map<string, string>(
         refRows.map((r) => [r.reference_id, r.id]),
       );
-
-      // 5. Build the full set of (section_id, reference_pk) pairs to insert
+ 
       const mappingPairs: { sectionId: string; refPk: string }[] = [];
 
       for (const s of sections) {
@@ -354,8 +351,7 @@ export class DraftRepository {
           }
         }
       }
-
-      // 6. Single batch INSERT via unnest — one round-trip regardless of pair count
+ 
       if (mappingPairs.length) {
         const sectionIdArr = mappingPairs.map((p) => p.sectionId);
         const refPkArr = mappingPairs.map((p) => p.refPk);
@@ -418,7 +414,6 @@ export class DraftRepository {
     try {
       await client.query("BEGIN");
 
-      // Reuse the same snapshot SQL inside the transaction
       const snapshot = await client.query(VERSION_SNAPSHOT_SQL, [
         draftId,
         version,
@@ -429,22 +424,26 @@ export class DraftRepository {
         return null;
       }
 
-      await client.query(`DELETE FROM sections WHERE draft_id = $1`, [draftId]);
-
       for (const r of snapshot.rows) {
-        await client.query(
+        const result = await client.query(
           `
-          INSERT INTO sections (id, draft_id, title, content, embedding, updated_at)
-          VALUES ($1, $2, $3, $4, $5::vector, NOW())
-          ON CONFLICT (id)
-          DO UPDATE SET
-            title      = EXCLUDED.title,
-            content    = EXCLUDED.content,
-            embedding  = EXCLUDED.embedding,
-            updated_at = NOW()
-          `,
+        UPDATE sections
+        SET
+          title      = $3,
+          content    = $4,
+          embedding  = $5::vector,
+          updated_at = NOW()
+        WHERE id = $1
+          AND draft_id = $2
+        `,
           [r.id, draftId, r.title, r.content, r.embedding],
         );
+
+        if (result.rowCount !== 1) {
+          throw new Error(
+            `Invariant violation: Section ${r.id} not found in draft ${draftId}`,
+          );
+        }
       }
 
       await client.query("COMMIT");
@@ -462,7 +461,6 @@ export class DraftRepository {
       client.release();
     }
   }
-
   async createVersion(params: {
     draftId: string;
     version: number;
