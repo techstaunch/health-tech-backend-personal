@@ -18,7 +18,7 @@ export class DraftService {
   constructor(
     private repository: DraftRepository,
     private searchService: SearchService,
-  ) { }
+  ) {}
 
   async prepareDraft(params: {
     patientId: string;
@@ -139,7 +139,7 @@ export class DraftService {
 
       if (!draft) return null;
 
-       const [sections, refs] = await Promise.all([
+      const [sections, refs] = await Promise.all([
         this.repository.getVersionSnapshot(
           draft.id,
           draft.currentVersionNumber,
@@ -430,6 +430,100 @@ export class DraftService {
         patientId: params.patientId,
         accountNumber: params.accountNumber,
         query: params.query,
+        error,
+      });
+      throw error;
+    }
+  }
+  async saveInlineVersion(params: {
+    patientId: string;
+    accountNumber: string;
+    createdBy: string;
+    sections: { id: string; title: string; content: string }[];
+  }): Promise<DraftEntity> {
+    try {
+      const draft = await this.repository.getDraftMeta(
+        params.patientId,
+        params.accountNumber,
+      );
+
+      if (!draft) {
+        throw new Error("Draft not found");
+      }
+
+      const resolvedSections: SectionEntity[] = params.sections.map(
+        (s) =>
+          new SectionEntity({
+            id: s.id,
+            title: s.title,
+            content: s.content,
+            referenceIds: [],
+            embedding: undefined,
+          }),
+      );
+
+      const newVersionNumber = draft.nextVersionNumber;
+
+      const versionId = await this.repository.createVersion({
+        draftId: draft.id,
+        version: newVersionNumber,
+        createdBy: params.createdBy,
+        isRollback: false,
+      });
+
+      await Promise.all([
+        this.repository.upsertSections(draft.id, resolvedSections),
+        this.repository.saveVersionSections(versionId, resolvedSections),
+        this.repository.updateDraftMeta(
+          draft.id,
+          newVersionNumber,
+          newVersionNumber + 1,
+        ),
+      ]);
+
+      draft.restoreSections(resolvedSections);
+      draft.advanceVersion();
+
+      logger.info("Inline version saved", {
+        draftId: draft.id,
+        version: newVersionNumber,
+      });
+
+      setImmediate(async () => {
+        try {
+          const embeddings = await this.embeddings.embedDocuments(
+            resolvedSections.map((s) => s.content),
+          );
+
+          resolvedSections.forEach((s, i) => s.updateEmbedding(embeddings[i]));
+
+          await Promise.all([
+            this.repository.upsertSections(draft.id, resolvedSections),
+            this.repository.updateVersionSectionEmbeddings(
+              versionId,
+              resolvedSections,
+            ),
+          ]);
+
+          this.searchService.buildIndex(draft);
+
+          logger.info("Embeddings updated for inline version", {
+            draftId: draft.id,
+            version: newVersionNumber,
+          });
+        } catch (err) {
+          logger.error("Background embedding error (inline save)", {
+            draftId: draft.id,
+            error: err,
+          });
+        }
+      });
+
+      return draft;
+    } catch (error) {
+      logger.error("Error saving inline version", {
+        patientId: params.patientId,
+        accountNumber: params.accountNumber,
         error,
       });
       throw error;
