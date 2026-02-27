@@ -94,12 +94,15 @@ export const summaryEditorTool = new DynamicStructuredTool({
           continue;
         }
 
+        const normalizeTarget = (name: string) =>
+          name.trim().toLowerCase().replace(/\s+section$/i, "");
+
+        const targetNormalized = normalizeTarget(intent.target);
+
         const exactMatch = !intent.isImplicit
           ? candidateSections.find(
-              (s) =>
-                s.title.trim().toLowerCase() ===
-                intent.target.trim().toLowerCase(),
-            )
+            (s) => normalizeTarget(s.title) === targetNormalized,
+          )
           : null;
 
         let targetSections = [];

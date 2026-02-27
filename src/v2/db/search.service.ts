@@ -2,8 +2,8 @@ import FlexSearch from "flexsearch";
 import { DraftEntity } from "./draft.entity";
 import { SectionEntity } from "./section.entity";
 
-const KEYWORD_WEIGHT = 0.35;
-const SEMANTIC_WEIGHT = 0.50;
+const KEYWORD_WEIGHT = 0.50;
+const SEMANTIC_WEIGHT = 0.35;
 const CONTENT_BOOST_WEIGHT = 0.15;
 
 interface SearchContext {
@@ -51,7 +51,7 @@ export class SearchService {
     queryEmbedding: number[],
     contentKeywords?: string[],
     limit = 3,
-  ) { 
+  ) {
     if (!this.contexts.has(draft.id)) {
       this.buildIndex(draft);
     }
@@ -76,7 +76,10 @@ export class SearchService {
       const keywordScore = keywordHitIds.has(s.id) ? KEYWORD_WEIGHT : 0;
 
       const semanticScore = s.embedding
-        ? this.cosineSimilarity(queryEmbedding, s.embedding) * SEMANTIC_WEIGHT
+        ? this.cosineSimilarity(
+          queryEmbedding,
+          s.embedding,
+        ) * SEMANTIC_WEIGHT
         : 0;
 
       const contentBoost = this.contentKeywordBoost(s.content, contentKeywords);
