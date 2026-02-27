@@ -12,6 +12,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(installAuth);
 
 app.use("/health", healthRouter);
+app.use("/api/v2/health", healthRouter);
 // app.use("/api/agent", agentRoutes);
 app.use("/api/v2", router);
 app.use("/api/v2/voice-to-text", voiceToTextRoutes);

@@ -2,8 +2,9 @@ import FlexSearch from "flexsearch";
 import { DraftEntity } from "./draft.entity";
 import { SectionEntity } from "./section.entity";
 
-const KEYWORD_WEIGHT = 0.4;
-const SEMANTIC_WEIGHT = 0.6;
+const KEYWORD_WEIGHT = 0.35;
+const SEMANTIC_WEIGHT = 0.50;
+const CONTENT_BOOST_WEIGHT = 0.15;
 
 interface SearchContext {
   index: any;
@@ -48,11 +49,14 @@ export class SearchService {
     draft: DraftEntity,
     query: string,
     queryEmbedding: number[],
+    contentKeywords?: string[],
     limit = 3,
-  ) {
-    const ctx = this.contexts.get(draft.id);
-    if (!ctx) throw new Error("Index not built");
+  ) { 
+    if (!this.contexts.has(draft.id)) {
+      this.buildIndex(draft);
+    }
 
+    const ctx = this.contexts.get(draft.id)!;
     const { index, sections } = ctx;
 
     const keywordResults = index.search(query, {
@@ -64,28 +68,20 @@ export class SearchService {
 
     if (Array.isArray(keywordResults)) {
       for (const r of keywordResults) {
-        r?.result?.forEach((id: string) =>
-          keywordHitIds.add(id),
-        );
+        r?.result?.forEach((id: string) => keywordHitIds.add(id));
       }
     }
 
     const scored = sections.map((s) => {
-      const keywordScore = keywordHitIds.has(s.id)
-        ? KEYWORD_WEIGHT
-        : 0;
+      const keywordScore = keywordHitIds.has(s.id) ? KEYWORD_WEIGHT : 0;
 
       const semanticScore = s.embedding
-        ? this.cosineSimilarity(
-            queryEmbedding,
-            s.embedding,
-          ) * SEMANTIC_WEIGHT
+        ? this.cosineSimilarity(queryEmbedding, s.embedding) * SEMANTIC_WEIGHT
         : 0;
 
-      const score = Math.min(
-        1,
-        keywordScore + semanticScore,
-      );
+      const contentBoost = this.contentKeywordBoost(s.content, contentKeywords);
+
+      const score = Math.min(1, keywordScore + semanticScore + contentBoost);
 
       return {
         sectionId: s.id,
@@ -100,10 +96,7 @@ export class SearchService {
       .slice(0, limit);
   }
 
-  private cosineSimilarity(
-    a: number[],
-    b: number[],
-  ): number {
+  private cosineSimilarity(a: number[], b: number[]): number {
     let dot = 0;
     let na = 0;
     let nb = 0;
@@ -116,5 +109,20 @@ export class SearchService {
 
     const denom = Math.sqrt(na) * Math.sqrt(nb);
     return denom === 0 ? 0 : dot / denom;
+  }
+
+  private contentKeywordBoost(
+    sectionContent: string,
+    keywords?: string[],
+  ): number {
+    if (!keywords?.length) return 0;
+
+    const lower = sectionContent.toLowerCase();
+
+    const matched = keywords.filter((kw) =>
+      lower.includes(kw.toLowerCase()),
+    ).length;
+
+    return (matched / keywords.length) * CONTENT_BOOST_WEIGHT;
   }
 }

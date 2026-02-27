@@ -4,11 +4,11 @@ import logger from "../../logger";
 import { EmbeddingsService } from "../../agents/services/embeddings.service";
 import { Reference } from "../../agents/types/draft-summary";
 
-import { DraftRepository } from "./draft.repository";
-import { SearchService } from "./search.service";
+import { DraftRepository } from "../db/draft.repository";
+import { SearchService } from "./dbsearch.service";
 
-import { DraftEntity } from "./draft.entity";
-import { SectionEntity } from "./section.entity";
+import { DraftEntity } from "../db/draft.entity";
+import { SectionEntity } from "../db/section.entity";
 
 export const LOW_CONFIDENCE_THRESHOLD = 0.5;
 
@@ -18,7 +18,7 @@ export class DraftService {
   constructor(
     private repository: DraftRepository,
     private searchService: SearchService,
-  ) { }
+  ) {}
 
   async prepareDraft(params: {
     patientId: string;
@@ -98,15 +98,10 @@ export class DraftService {
             this.repository.updateVersionSectionEmbeddings(versionId, sections),
           ]);
 
-          this.searchService.buildIndex(draft);
-
-          logger.info(
-            "Background tasks completed (embeddings + search index)",
-            {
-              patientId: params.patientId,
-              accountNumber: params.accountNumber,
-            },
-          );
+          logger.info("Background tasks completed (embeddings)", {
+            patientId: params.patientId,
+            accountNumber: params.accountNumber,
+          });
         } catch (bgError) {
           logger.error("Error in background tasks", {
             patientId: params.patientId,
@@ -139,7 +134,8 @@ export class DraftService {
 
       if (!draft) return null;
 
-       const [sections, refs] = await Promise.all([
+      // since they only depend on draft.id / draft.currentVersionNumber.
+      const [sections, refs] = await Promise.all([
         this.repository.getVersionSnapshot(
           draft.id,
           draft.currentVersionNumber,
@@ -152,8 +148,6 @@ export class DraftService {
       }
 
       draft.restoreReferences(refs);
-
-      this.searchService.buildIndex(draft);
 
       return draft;
     } catch (error) {
@@ -197,7 +191,7 @@ export class DraftService {
 
       await this.repository.upsertSections(draft.id, [section]);
 
-      this.searchService.buildIndex(draft);
+      // Rebuild index once after all mutations are done
 
       logger.info("Section updated", {
         draftId: draft.id,
@@ -296,8 +290,6 @@ export class DraftService {
       draft.restoreSections(restored);
       draft.restoreReferences(refs);
 
-      this.searchService.buildIndex(draft);
-
       logger.info("Draft discarded", { draftId: draft.id });
 
       return true;
@@ -360,8 +352,6 @@ export class DraftService {
         draft.currentVersionNumber,
         draft.nextVersionNumber,
       );
-
-      this.searchService.buildIndex(draft);
 
       logger.info("Draft rolled back", {
         draftId: draft.id,

@@ -1,7 +1,7 @@
 import { AzureChatOpenAI } from "@langchain/openai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { IntentResult } from "../types/agent.types";
 import logger from "../../logger";
+import { IntentResult } from "../../agents/types/agent.types";
 
 const VALID_ACTIONS = ["replace", "add", "delete", "update", "change"] as const;
 
@@ -32,6 +32,7 @@ NOTES:
     4. Common synonyms that may appear in document sections (e.g. "anxiety" → also include "agitation")
   Aim for 3–7 specific, targeted tokens that would appear verbatim in the target section's content.`;
 
+
 const VALIDATION_SYSTEM_PROMPT = `You are a critical auditor for a medical document editor.
 Your task is to verify if the extracted intents (JSON array) correctly and completely represent the user's natural language instruction.
 
@@ -49,7 +50,6 @@ Output MUST be a valid JSON object:
   "isValid": true | false,
   "reason": "Clear, concise explanation of why it is invalid or what is missing. If valid, leave empty or 'OK'."
 }}`;
-
 
 /**
  * Parses a natural language instruction into one or more structured IntentResults.

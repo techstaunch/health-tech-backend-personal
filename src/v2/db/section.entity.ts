@@ -33,6 +33,10 @@ export class SectionEntity {
     return this._embedding;
   }
 
+  updateEmbedding(embedding: number[]): void {
+    this._embedding = embedding;  
+  }
+
   update(
     content: string,
     referenceIds: string[],
@@ -48,8 +52,7 @@ export class SectionEntity {
       id: this.id,
       title: this.title,
       content: this._content,
-      referenceIds: this._referenceIds,
-      // embedding: this._embedding,
+      referenceIds: this._referenceIds, 
     };
   }
 

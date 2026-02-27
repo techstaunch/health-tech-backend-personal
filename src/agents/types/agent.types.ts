@@ -85,6 +85,12 @@ export interface IntentResult {
     target: string;
     /** The new value or content to apply */
     value: string;
+    /** True when the user did NOT explicitly name a section */
+    isImplicit?: boolean;
+    /** Key clinical terms from the instruction for semantic matching */
+    contentKeywords?: string[];
+    /** The specific part of the original instruction related to this intent */
+    originalPhrase: string;
 }
 
 /**
@@ -122,4 +128,20 @@ export interface ToolOutput {
     edits: PatchResult[];
     /** True when the agent should ask the user for more specific input */
     needsClarification?: boolean;
+}
+
+/**
+ * Data fetched from an external source based on a document ID.
+ */
+export interface EnrichedData {
+    /** The ID extracted from the document (e.g., T263517) */
+    id: string;
+    /** The content retrieved from the external API */
+    content: string;
+    /** Whether the data was found and successfully retrieved */
+    found: boolean;
+    /** Optional title or source information */
+    title?: string;
+    /** Optional relevance score */
+    relevance?: number;
 }

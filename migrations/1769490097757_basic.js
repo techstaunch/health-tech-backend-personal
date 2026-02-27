@@ -81,7 +81,7 @@ export const up = (pgm) => {
     },
 
     embedding: {
-      type: "vector(384)",
+      type: "vector(1024)",
     },
 
     updated_at: {
@@ -161,7 +161,7 @@ export const up = (pgm) => {
     },
 
     embedding: {
-      type: "vector(384)",
+      type: "vector(1024)",
     },
   });
 
@@ -169,8 +169,14 @@ export const up = (pgm) => {
 
   pgm.createTable("draft_references", {
     id: {
-      type: "text",
+      type: "uuid",
       primaryKey: true,
+      default: pgm.func("gen_random_uuid()"),
+    },
+
+    reference_id: {
+      type: "text",
+      notNull: true,
     },
 
     draft_id: {
@@ -200,6 +206,15 @@ export const up = (pgm) => {
   });
 
   pgm.createIndex("draft_references", ["draft_id"]);
+  pgm.createIndex("draft_references", ["reference_id"]);
+
+  pgm.addConstraint(
+    "draft_references",
+    "draft_references_draft_reference_unique",
+    {
+      unique: ["draft_id", "reference_id"],
+    },
+  );
 
   pgm.createTable("section_reference_map", {
     section_id: {
@@ -210,16 +225,29 @@ export const up = (pgm) => {
     },
 
     reference_id: {
-      type: "text",
+      type: "uuid",
       notNull: true,
       references: "draft_references",
       onDelete: "CASCADE",
     },
   });
+  pgm.createIndex("section_reference_map", ["reference_id"]);
 
   pgm.addConstraint("section_reference_map", "section_reference_map_pk", {
     primaryKey: ["section_id", "reference_id"],
   });
+  pgm.addConstraint(
+    "version_sections",
+    "version_sections_version_section_unique",
+    {
+      unique: ["version_id", "section_id"],
+    },
+  );
+  pgm.sql(`
+    CREATE INDEX sections_fts_idx
+    ON sections
+    USING GIN (to_tsvector('english', title || ' ' || content))
+  `);
 
   pgm.sql(`
     CREATE INDEX sections_embedding_idx
@@ -229,6 +257,12 @@ export const up = (pgm) => {
   `);
 };
 
+/**
+ * Reverses the migration by dropping all tables and extensions
+ * created by the up migration.
+ *
+ * @param {pgm} pgm - The migration manager
+ */
 export const down = (pgm) => {
   pgm.dropTable("section_reference_map");
   pgm.dropTable("draft_references");

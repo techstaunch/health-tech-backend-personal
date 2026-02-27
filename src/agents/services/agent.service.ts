@@ -135,12 +135,10 @@ export class AgentService {
     private extractToolResult(agentResult: any) {
         const messages = agentResult.messages;
 
-        // Find the last tool message — this carries the structured ToolOutput
-        const toolMsg = [...messages]
-            .reverse()
-            .find((m: any) => m._getType?.() === "tool");
+        // Find all tool messages in the history
+        const toolMessages = messages.filter((m: any) => m._getType?.() === "tool");
 
-        if (!toolMsg) {
+        if (toolMessages.length === 0) {
             // Fallback: surface the last AI text response (e.g. clarification question
             // that the agent decided to answer without calling the tool)
             const aiMsg = [...messages]
@@ -153,12 +151,40 @@ export class AgentService {
             return null;
         }
 
-        try {
-            return JSON.parse(toolMsg.content);
-        } catch {
-            // If the content is plain text (not JSON), wrap it
-            return { message: toolMsg.content, edits: [], needsClarification: false };
+        const combinedResult = {
+            message: [] as string[],
+            edits: [] as any[],
+            needsClarification: false
+        };
+
+        for (const toolMsg of toolMessages) {
+            try {
+                const parsed = JSON.parse(toolMsg.content);
+
+                if (parsed.message) {
+                    combinedResult.message.push(parsed.message);
+                }
+
+                if (Array.isArray(parsed.edits)) {
+                    combinedResult.edits.push(...parsed.edits);
+                }
+
+                if (parsed.needsClarification) {
+                    combinedResult.needsClarification = true;
+                }
+            } catch {
+                // If the content is plain text (not JSON), push it as a message
+                if (toolMsg.content) {
+                    combinedResult.message.push(toolMsg.content);
+                }
+            }
         }
+
+        return {
+            message: combinedResult.message.join(" "),
+            edits: combinedResult.edits,
+            needsClarification: combinedResult.needsClarification
+        };
     }
 
 

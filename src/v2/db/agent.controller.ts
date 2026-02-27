@@ -44,11 +44,15 @@ export class AgentController {
 
       const { patientId, accountNumber } = parsed.data;
       const userId = (req as any).user?.id || "anonymous";
-      const exists = await this.draftService.getDraft(patientId, accountNumber);
-      if (exists?.id) {
+
+      const existing = await this.draftService.getDraft(
+        patientId,
+        accountNumber,
+      );
+      if (existing?.id) {
         return res.json({
           success: true,
-          data: exists.toJSON(),
+          data: existing!.toJSON(),
         });
       }
       const prepared = await dischargeSummaryService.prepare(
@@ -56,12 +60,24 @@ export class AgentController {
         accountNumber,
       );
 
+      logger.info("Creating draft from prepared summary", {
+        patientId,
+        accountNumber,
+        sectionCount: Object.keys(prepared.sections).length,
+      });
+
       const draft = await this.draftService.prepareDraft({
         patientId,
         accountNumber,
         createdBy: userId,
         draft: prepared.sections,
         sectionReferences: prepared.sectionReferences,
+      });
+
+      logger.info("Draft created successfully", {
+        patientId,
+        accountNumber,
+        draftId: draft.id,
       });
 
       return res.json({
@@ -72,7 +88,11 @@ export class AgentController {
         },
       });
     } catch (e: any) {
-      logger.error("prepareDraft failed", e);
+      logger.error("prepareDraft failed", {
+        error: e.message,
+        stack: e.stack,
+        body: req.body,
+      });
 
       return res.status(500).json({
         success: false,
@@ -80,7 +100,6 @@ export class AgentController {
       });
     }
   }
-
   async getDraft(req: Request, res: Response) {
     try {
       const { patientId, accountNumber } = req.params;
@@ -357,12 +376,10 @@ export class AgentController {
         req.file.buffer,
         req.file.mimetype,
       );
- 
 
       logger.info("Voice command transcribed", {
         userId,
         originalText: transcribedText,
-    
         autoProcess,
       });
 
@@ -386,4 +403,3 @@ export class AgentController {
     }
   }
 }
- 
