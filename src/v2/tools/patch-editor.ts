@@ -1,16 +1,7 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { AzureChatOpenAI } from "@langchain/openai";
 import logger from "../../logger";
-import { EnrichedData } from "../../agents/types/agent.types";
-
-export interface ScoredSection {
-  sectionId: number;
-  title: string;
-  content: string;
-  embedding?: number[];
-  score: number;
-  confidence: number;
-}
+import { EnrichedData, ScoredSection } from "../../agents/types/agent.types";
 
 const PATCH_SYSTEM_PROMPT = `You are a clinical documentation editor.
 Update ONLY the provided section content based on the instruction.

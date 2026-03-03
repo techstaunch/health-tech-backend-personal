@@ -29,6 +29,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
     userId: z.string(),
     patientId: z.string(),
     accountNumber: z.string(),
+    sectionId: z.string().optional(),
   }),
 
   func: async ({
@@ -36,6 +37,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
     userId,
     patientId,
     accountNumber,
+    sectionId
   }): Promise<string> => {
     try {
       logger.info("Summary editor invoked", {
@@ -43,12 +45,13 @@ export const summaryEditorTool = new DynamicStructuredTool({
         userId,
         patientId,
         accountNumber,
+        sectionId
       });
 
       const intents = await parseIntent(instruction, model);
 
       const validation = await validateIntent(instruction, intents, model);
-      console.log("validation", validation);
+
       if (!validation.isValid) {
         logger.warn("edit_summary_sections: intent validation failed", {
           reason: validation.reason,
@@ -67,73 +70,97 @@ export const summaryEditorTool = new DynamicStructuredTool({
       const clarificationMessages: string[] = [];
       const successMessages: string[] = [];
       let needsClarification = false;
-      console.log("intents", intents);
+
+      const synthesizeInstruction = (intent: any): string => {
+        const { action, target, value } = intent;
+        switch (action) {
+          case "add":
+            return `Add the following to the section: ${value}`;
+          case "delete":
+            return `Delete the following from the section: ${target}`;
+          case "replace":
+          case "update":
+          case "change":
+            return `Update the section regarding "${target}" with the following: ${value}`;
+          default:
+            return `Apply changes to the section: ${target} -> ${value}`;
+        }
+      };
+
+      const draft = await draftService.getDraft(patientId, accountNumber);
+      if (!draft) {
+        throw new Error("Draft not found");
+      }
 
       for (const intent of intents) {
-        const searchQuery =
-          intent.isImplicit && intent.contentKeywords?.length
-            ? `${intent.contentKeywords.join(" ")} ${intent.originalPhrase}`.trim()
-            : `${intent.target} ${intent.originalPhrase}`.trim();
+        let targetSections: any[] = [];
 
-        const candidateSections = await draftService.search({
-          patientId,
-          accountNumber,
-          query: searchQuery,
-          contentKeywords: intent.isImplicit
-            ? intent.contentKeywords
-            : undefined,
-          limit: 5,
-        });
-        console.log("intent", intent);
-        console.log("candidateSections", candidateSections);
-
-        if (!candidateSections.length) {
-          clarificationMessages.push(
-            `No sections found for "${intent.target}".`,
-          );
-          continue;
+        if (sectionId) {
+          const section = draft.getSection(sectionId);
+          if (section) {
+            targetSections = [
+              {
+                id: section.id,
+                sectionId: section.id,
+                title: section.title,
+                content: section.content,
+                score: 1.0,
+                confidence: 1.0,
+              },
+            ];
+          } else {
+            logger.warn("Provided sectionId not found in draft", { sectionId });
+          }
         }
 
-        const normalizeTarget = (name: string) =>
-          name.trim().toLowerCase().replace(/\s+section$/i, "");
+        if (targetSections.length === 0) {
+          const searchQuery = `${intent.target} ${intent.value}`.trim();
 
-        const targetNormalized = normalizeTarget(intent.target);
+          const candidateSections = await draftService.search({
+            patientId,
+            accountNumber,
+            query: searchQuery,
+            limit: 5,
+          });
 
-        const exactMatch = !intent.isImplicit
-          ? candidateSections.find(
+          if (!candidateSections.length) {
+            clarificationMessages.push(
+              `No sections found for "${intent.target}".`,
+            );
+            continue;
+          }
+
+          const normalizeTarget = (name: string) =>
+            name.trim().toLowerCase().replace(/\s+section$/i, "");
+
+          const targetNormalized = normalizeTarget(intent.target);
+
+          const exactMatch = candidateSections.find(
             (s) => normalizeTarget(s.title) === targetNormalized,
-          )
-          : null;
-
-        let targetSections = [];
-
-        if (exactMatch) {
-          logger.info("Exact match found for non-implicit intent", {
-            target: intent.target,
-            sectionId: exactMatch.sectionId,
-          });
-          targetSections = [exactMatch];
-        } else {
-          const topConfidence = candidateSections[0].confidence;
-
-          targetSections = candidateSections.filter((s, idx) => {
-            if (s.confidence < LOW_CONFIDENCE_THRESHOLD) return false;
-
-            if (idx === 0) return true;
-
-            return topConfidence - s.confidence < 0.15 || s.confidence > 0.6;
-          });
-        }
-
-        if (!targetSections.length) {
-          needsClarification = true;
-          clarificationMessages.push(
-            `Low confidence for "${intent.target}" (best: "${candidateSections[0].title}" ${(candidateSections[0].confidence * 100).toFixed(0)}%).`,
           );
-          continue;
+
+          if (exactMatch) {
+            targetSections = [exactMatch];
+          } else {
+            const topConfidence = candidateSections[0].confidence;
+            targetSections = candidateSections.filter((s, idx) => {
+              if (s.confidence < LOW_CONFIDENCE_THRESHOLD) return false;
+              if (idx === 0) return true;
+              return topConfidence - s.confidence < 0.15 || s.confidence > 0.6;
+            });
+          }
+
+          if (!targetSections.length) {
+            needsClarification = true;
+            clarificationMessages.push(
+              `Low confidence for "${intent.target}" (best: "${candidateSections[0].title}" ${(candidateSections[0].confidence * 100).toFixed(0)}%).`,
+            );
+            continue;
+          }
         }
 
         let intentHandled = false;
+        const instructionToApply = synthesizeInstruction(intent);
 
         for (const section of targetSections) {
           const isAdd = intent.action === "add";
@@ -148,14 +175,14 @@ export const summaryEditorTool = new DynamicStructuredTool({
           // }
 
           const updated = isAdd
-            ? await addToSection(section as any, intent.originalPhrase, model)
-            : await patchSection(section as any, intent.originalPhrase, model);
+            ? await addToSection(section as any, instructionToApply, model)
+            : await patchSection(section as any, instructionToApply, model);
 
           if (updated.trim() !== original.trim()) {
             await draftService.updateSection({
               patientId,
               accountNumber,
-              sectionId: section.sectionId,
+              sectionId: section.sectionId || section.id,
               newContent: updated,
               newReferences: [],
             });

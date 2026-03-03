@@ -13,24 +13,15 @@ Output schema (no other text, no markdown, no explanation):
   {
     "action": "replace | add | delete | update | change",
     "target": "the section name or concept to change",
-    "value": "the new value or content to apply",
-    "isImplicit": true | false,
-    "contentKeywords": ["keyword1", "keyword2"],
-    "originalPhrase": "the specific substring from the instruction for this edit"
+    "value": "the new value or content to apply"
   }
 ]
 
 NOTES:
 - The user may provide multiple instructions (e.g., "Update observation 15 min to 16 min and remove suicidal ideation"). Extract EACH as a separate object in the array.
-- 'originalPhrase' MUST be the exact or near-exact part of the user's input that relates to THIS specific edit (e.g. "remove suicidal ideation").
-- Set 'isImplicit' to true if the user did NOT explicitly name a section or area (e.g. "Update observation 15 min to 16 min" has no section name — set isImplicit=true).
-- Set 'isImplicit' to false only when the user names a specific section directly (e.g. "In the Course of Treatment section, change...").
-- 'contentKeywords' MUST include all of the following that are present in the instruction:
-    1. Verbatim phrases and clinical terms (e.g. "observation", "Effexor", "Penicillin")
-    2. Numeric values and units as they appear (e.g. "15 min", "75mg", "twice daily")
-    3. Clinical action verbs (e.g. "observation", "precautions", "assessment")
-    4. Common synonyms that may appear in document sections (e.g. "anxiety" → also include "agitation")
-  Aim for 3–7 specific, targeted tokens that would appear verbatim in the target section's content.`;
+- Focus on accurately identifying the target section and the change requested.
+- If the instruction is to "add" something, the 'value' should contain the new content.
+- If the instruction is to "delete", the 'target' should be specific about what to remove.`;
 
 
 const VALIDATION_SYSTEM_PROMPT = `You are a critical auditor for a medical document editor.
@@ -41,15 +32,15 @@ Extracted Intents: {intents}
 
 Rules for validation:
 1. Every distinct edit requested by the user must be present in the intents.
-2. The 'originalPhrase' in each intent must accurately reflect what the user said for that specific edit.
-3. If the user's instruction is ambiguous or missing critical information (like what to change something TO), flag it.
-4. If the intents contain hallucinations (actions or values not in the instruction), flag it.
+2. If the user's instruction is ambiguous or missing critical information (like what to change something TO), flag it.
+3. If the intents contain hallucinations (actions or values not in the instruction), flag it.
 
 Output MUST be a valid JSON object:
-{{
+{
   "isValid": true | false,
   "reason": "Clear, concise explanation of why it is invalid or what is missing. If valid, leave empty or 'OK'."
-}}`;
+}
+`;
 
 /**
  * Parses a natural language instruction into one or more structured IntentResults.
@@ -106,9 +97,6 @@ export async function parseIntent(
             action,
             target: String(parsed.target || ""),
             value: String(parsed.value ?? ""),
-            isImplicit: Boolean(parsed.isImplicit),
-            contentKeywords: Array.isArray(parsed.contentKeywords) ? parsed.contentKeywords : [],
-            originalPhrase: String(parsed.originalPhrase || ""),
         };
     });
 

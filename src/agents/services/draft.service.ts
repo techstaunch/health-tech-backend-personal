@@ -134,7 +134,12 @@ export class DraftService {
 
             const score = Math.min(1, keywordScore + semanticScore + contentBoost);
 
-            return { ...s, score, confidence: score };
+            return {
+                ...s,
+                sectionId: s.id.toString(),
+                score,
+                confidence: score
+            };
         });
 
         const results = scored.sort((a, b) => b.score - a.score).slice(0, 3);

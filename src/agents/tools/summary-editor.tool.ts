@@ -5,7 +5,7 @@ import { DataEnrichmentService } from "../services/data-enrichment.service";
 import { createAzureOpenAIModel } from "../config/azure-openai.config";
 import { parseIntent, validateIntent } from "./intent-parser";
 import { patchSection, addToSection } from "./patch-editor";
-import { PatchResult, ToolOutput } from "../types/agent.types";
+import { PatchResult, ToolOutput, ScoredSection } from "../types/agent.types";
 import logger from "../../logger";
 
 // Shared model instance — created once, reused for all sub-calls within the tool
@@ -67,17 +67,35 @@ export const summaryEditorTool = new DynamicStructuredTool({
             const successMessages: string[] = [];
 
             for (const intent of intents) {
-                // ── Step 2: Hybrid Search ─────────────────────────────────────────
-                const searchQuery =
-                    intent.isImplicit && intent.contentKeywords?.length
-                        ? `${intent.contentKeywords.join(" ")} ${intent.originalPhrase}`.trim()
-                        : `${intent.target} ${intent.originalPhrase}`.trim();
+                // Construct a descriptive string for the edit action
+                const actionDescription = `${intent.action} ${intent.target} to ${intent.value}`.trim();
 
-                const candidateSections = await draftService.hybridSearch(
-                    userId,
-                    searchQuery,
-                    intent.isImplicit ? intent.contentKeywords : undefined
-                );
+                let candidateSections: ScoredSection[] = [];
+
+                // ── Step 2: Section Identification ───────────────────────────────
+                // Priority 1: Direct section look up if sectionId is provided
+                if (intent.sectionId) {
+                    const allSections = DraftService.getSections(userId);
+                    const directMatch = allSections?.find((s) => s.id.toString() === intent.sectionId);
+                    if (directMatch) {
+                        candidateSections = [{
+                            ...directMatch,
+                            sectionId: directMatch.id.toString(),
+                            score: 1.0,
+                            confidence: 1.0
+                        }];
+                        logger.info("edit_summary_sections: direct section match found", { sectionId: intent.sectionId, title: directMatch.title });
+                    }
+                }
+
+                // Priority 2: Hybrid search if no direct match or sectionId was not provided
+                if (candidateSections.length === 0) {
+                    const searchQuery = `${intent.target} ${intent.value}`.trim();
+                    candidateSections = await draftService.hybridSearch(
+                        userId,
+                        searchQuery
+                    );
+                }
 
                 if (candidateSections.length === 0) {
                     clarificationMessages.push(`No sections found for target "${intent.target}".`);
@@ -121,12 +139,12 @@ export const summaryEditorTool = new DynamicStructuredTool({
 
                     if (extractedIds.length > 0) {
                         const rawEnrichedData = await enrichmentService.fetchEnrichedData(extractedIds);
-                        enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, intent.originalPhrase, model);
+                        enrichedData = await enrichmentService.validateRelevance(rawEnrichedData, actionDescription, model);
                     }
 
                     const updatedContent = isAddOperation
-                        ? await addToSection(section, intent.originalPhrase, model, enrichedData)
-                        : await patchSection(section, intent.originalPhrase, model, enrichedData);
+                        ? await addToSection(section, actionDescription, model, enrichedData)
+                        : await patchSection(section, actionDescription, model, enrichedData);
 
                     // Check if a change actually occurred
                     if (updatedContent.trim() !== original.trim()) {
@@ -145,7 +163,7 @@ export const summaryEditorTool = new DynamicStructuredTool({
                     } else {
                         logger.info("edit_summary_sections: no change detected for section", {
                             title: section.title,
-                            intent: intent.originalPhrase
+                            intent: actionDescription
                         });
                     }
                 }

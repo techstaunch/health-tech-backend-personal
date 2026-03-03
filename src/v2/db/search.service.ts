@@ -87,9 +87,11 @@ export class SearchService {
       const score = Math.min(1, keywordScore + semanticScore + contentBoost);
 
       return {
+        id: s.id,
         sectionId: s.id,
         title: s.title,
         content: s.content,
+        score: score,
         confidence: score,
       };
     });
