@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import logger from "../../logger";
 import { TranscriptionServiceFactory } from "../../voice-to-text/factories/transcription-service.factory";
-import { AgentService } from "./agent.service";
+import { AgentService, AgentIdentity } from "./agent.service";
 import { dischargeSummaryService } from "./discharge-summary.service";
 import { draftServiceProvider } from "./draft-service.provider";
 import { DraftService } from "./draft.service";
@@ -358,7 +358,7 @@ export class AgentController {
 
   async invoke(req: Request, res: Response) {
     try {
-      const { patientId, accountNumber, messages } = req.body;
+      const { patientId, accountNumber, messages, sectionId } = req.body;
 
       if (!patientId || !accountNumber) {
         return res.status(400).json({
@@ -372,7 +372,8 @@ export class AgentController {
       const result = await this.agentService.invoke(messages, userId, {
         patientId: patientId as string,
         accountNumber: accountNumber as string,
-      });
+        sectionId: sectionId as string
+      } as AgentIdentity);
 
       return res.json({ success: true, data: result });
     } catch (e: any) {
@@ -429,6 +430,7 @@ export class AgentController {
       logger.info("Voice command transcribed", {
         userId,
         originalText: transcribedText,
+
         autoProcess,
       });
 

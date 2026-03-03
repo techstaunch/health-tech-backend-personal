@@ -80,17 +80,13 @@ export interface ToolResult {
  */
 export interface IntentResult {
     /** The type of edit operation */
-    action: "replace" | "add" | "delete" | "update";
+    action: "replace" | "add" | "delete" | "update" | "change";
     /** The section or concept to target */
     target: string;
     /** The new value or content to apply */
     value: string;
-    /** True when the user did NOT explicitly name a section */
-    isImplicit?: boolean;
-    /** Key clinical terms from the instruction for semantic matching */
-    contentKeywords?: string[];
-    /** The specific part of the original instruction related to this intent */
-    originalPhrase: string;
+    /** Optional specific section ID provided by the user */
+    sectionId?: string;
 }
 
 /**
@@ -99,6 +95,7 @@ export interface IntentResult {
  */
 export interface ScoredSection {
     id: number;
+    sectionId: string;
     title: string;
     content: string;
     embedding?: number[];

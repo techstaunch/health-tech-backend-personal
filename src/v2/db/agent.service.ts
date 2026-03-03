@@ -25,7 +25,14 @@ export const AgentState = Annotation.Root({
   userId: Annotation<string>(),
   patientId: Annotation<string>(),
   accountNumber: Annotation<string>(),
+  sectionId: Annotation<string>(),
 });
+
+export interface AgentIdentity {
+  patientId: string;
+  accountNumber: string;
+  sectionId: string;
+}
 
 export class AgentService {
   private agent!: CompiledStateGraph<any, any, any>;
@@ -45,6 +52,7 @@ export class AgentService {
           `CURRENT USER ID: ${state.userId}`,
           `PATIENT ID: ${state.patientId}`,
           `ACCOUNT NUMBER: ${state.accountNumber}`,
+          `SECTION ID: ${state.sectionId}`,
           `Use userId, patientId, and accountNumber for all tools.`,
           `If confidence is below ${LOW_CONFIDENCE_THRESHOLD}, ask for clarification.`,
         ].join("\n");
@@ -192,16 +200,14 @@ export class AgentService {
   async invoke(
     messages: AgentMessage[],
     userId: string,
-    identity: {
-      patientId: string;
-      accountNumber: string;
-    },
+    identity: AgentIdentity,
   ) {
     const result = await this.agent.invoke({
       messages: messages as any,
       userId,
       patientId: identity.patientId,
       accountNumber: identity.accountNumber,
+      sectionId: identity.sectionId,
     });
 
     const toolData = this.extractToolResult(result);
