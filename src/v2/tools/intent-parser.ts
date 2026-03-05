@@ -20,6 +20,7 @@ Output schema (no other text, no markdown, no explanation):
 NOTES:
 - The user may provide multiple instructions (e.g., "Update observation 15 min to 16 min and remove suicidal ideation"). Extract EACH as a separate object in the array.
 - Focus on accurately identifying the target section and the change requested.
+- **IMPLICIT UPDATES**: If the user provides an entity name and a value (e.g., "Hydroxyzine 50mg"), assume the action is "update". This is common in clinical shorthand for adjusting doses of existing medications.
 - If the instruction is to "add" something, the 'value' should contain the new content.
 - If the instruction is to "delete", the 'target' should be specific about what to remove.`;
 
@@ -32,7 +33,7 @@ Extracted Intents: {intents}
 
 Rules for validation:
 1. Every distinct edit requested by the user must be present in the intents.
-2. If the user's instruction is ambiguous or missing critical information (like what to change something TO), flag it.
+2. If the user's instruction is ambiguous or missing critical information (like what to change something TO), flag it. **Exception**: Clinical shorthand like "{Entity} {Value}" (e.g., "Hydroxyzine 50mg") should be treated as a valid update intent for that entity, even if no verb is present.
 3. If the intents contain hallucinations (actions or values not in the instruction), flag it.
 
 Output MUST be a valid JSON object:
@@ -54,14 +55,21 @@ Output MUST be a valid JSON object:
  */
 export async function parseIntent(
     instruction: string,
-    model: AzureChatOpenAI
+    model: AzureChatOpenAI,
+    feedback?: string
 ): Promise<IntentResult[]> {
-    logger.info("Intent parser: parsing instruction", { instruction });
+    logger.info("Intent parser: parsing instruction", { instruction, hasFeedback: !!feedback });
 
-    const response = await model.invoke([
+    const messages = [
         new SystemMessage(INTENT_SYSTEM_PROMPT),
         new HumanMessage(`Instruction: ${instruction}`),
-    ]);
+    ];
+
+    if (feedback) {
+        messages.push(new HumanMessage(`FEEDBACK FROM PREVIOUS VALIDATION: ${feedback}\n\nPlease correct the previous attempt based on this feedback.`));
+    }
+
+    const response = await model.invoke(messages);
 
     const rawContent =
         typeof response.content === "string"

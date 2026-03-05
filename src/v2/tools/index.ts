@@ -1,7 +1,22 @@
 import { createSectionTool } from "./create-section.tool";
-import { summaryEditorTool } from "./summary-editor.tool";
+import { parseIntentTool } from "./parse-intent-tool";
+import { validateIntentTool } from "./validate-intent-tool";
+import { searchSectionsTool } from "./search-sections-tool";
+import { applyEditTool } from "./apply-edit-tool";
 
-export const healthcareTools = [summaryEditorTool, createSectionTool];
+export const healthcareTools = [
+    parseIntentTool,
+    validateIntentTool,
+    searchSectionsTool,
+    applyEditTool,
+    createSectionTool
+];
 
-export { createSectionTool, summaryEditorTool };
+export {
+    createSectionTool,
+    parseIntentTool,
+    validateIntentTool,
+    searchSectionsTool,
+    applyEditTool
+};
 

@@ -103,6 +103,7 @@ export class AgentService {
                 userId: state.userId,
                 patientId: state.patientId,
                 accountNumber: state.accountNumber,
+                sectionId: state.sectionId,
               };
 
               logger.info("Tool call started", {
@@ -158,42 +159,52 @@ export class AgentService {
 
   private extractToolResult(result: any) {
     const messages = result?.messages ?? [];
+    const edits: any[] = [];
+    let message = "";
+    let needsClarification = false;
 
-    const toolMsg = [...messages]
-      .reverse()
-      .find((m) => m?._getType?.() === "tool");
-
-    if (toolMsg) {
-      try {
-        return JSON.parse(toolMsg.content);
-      } catch {
-        return {
-          message: toolMsg.content,
-          edits: [],
-          needsClarification: false,
-        };
+    // Collect all edits from tool messages
+    for (const m of messages) {
+      if (m?._getType?.() === "tool") {
+        try {
+          const content = JSON.parse(m.content);
+          if (content.edits && Array.isArray(content.edits)) {
+            edits.push(...content.edits);
+          } else if (content.success && content.updated !== undefined) {
+            // For apply_edit_tool which returns a single edit result
+            edits.push({
+              title: content.title,
+              original: content.original,
+              updated: content.updated,
+              confidence: 1.0
+            });
+          }
+          if (content.needsClarification) {
+            needsClarification = true;
+          }
+        } catch {
+          // Not JSON or doesn't have edits, ignore
+        }
       }
     }
 
+    // Use the last AI message as the overall summary/message
     const aiMsg = [...messages].reverse().find((m) => m?._getType?.() === "ai");
-
     if (aiMsg) {
-      const text =
-        typeof aiMsg.content === "string"
-          ? aiMsg.content
-          : JSON.stringify(aiMsg.content);
+      message = typeof aiMsg.content === "string"
+        ? aiMsg.content
+        : JSON.stringify(aiMsg.content);
 
-      return {
-        message: text,
-        edits: [],
-        needsClarification: false,
-      };
+      // If the AI message itself is just a tool call, don't use it as the final message
+      if ((aiMsg as AIMessage).tool_calls?.length && !message) {
+        message = "Processing your request...";
+      }
     }
 
     return {
-      message: null,
-      edits: [],
-      needsClarification: false,
+      message: message || "Tasks completed.",
+      edits,
+      needsClarification,
     };
   }
 
